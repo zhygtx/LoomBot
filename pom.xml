@@ -1,257 +1,99 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
-    <groupId>com.generalbot</groupId>
-    <artifactId>generalbot</artifactId>
-    <version>1.0-SNAPSHOT</version>
 
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.0</version>
+        <version>4.1.1</version>
     </parent>
 
+    <groupId>com.loom</groupId>
+    <artifactId>loom</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
     <properties>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
+        <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <spring-ai.version>1.1.3</spring-ai.version>
+        <mybatis-plus.version>3.5.17</mybatis-plus.version>
+        <docker-java.version>3.7.1</docker-java.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <!-- Docker Java BOM：统一管理 docker-java 各模块版本 -->
             <dependency>
-                <groupId>org.springframework.ai</groupId>
-                <artifactId>spring-ai-bom</artifactId>
-                <version>${spring-ai.version}</version>
+                <groupId>com.github.docker-java</groupId>
+                <artifactId>docker-java-bom</artifactId>
+                <version>${docker-java.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
         </dependencies>
     </dependencyManagement>
 
-    <repositories>
-        <repository>
-            <id>jitpack.io</id>
-            <url>https://www.jitpack.io</url>
-        </repository>
-    </repositories>
-
     <dependencies>
-        <!-- Spring Boot Actuator 提供生产就绪的功能，如健康检查、指标等 -->
+        <!-- Web MVC + 内嵌 Tomcat（Boot 4 中 spring-boot-starter-web 已废弃，改用 webmvc） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
 
-        <!-- Spring Boot Web Starter 用于构建Web应用程序，包括RESTful服务和MVC功能 -->
+        <!-- WebSocket：反向 WS 用服务端，正向 WS 用 StandardWebSocketClient，同一个 starter 全覆盖 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
 
-        <!-- Spring AI 核心（ChatClient、Prompt、Message 等） -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-client-chat</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-openai</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-anthropic</artifactId>
-        </dependency>
-
-        <!-- Spring AI MCP Server (WebFlux/SSE 模式) -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-mcp-server-webflux</artifactId>
-            <version>1.1.3</version>
-        </dependency>
-
-        <!-- Spring Security -->
+        <!-- Spring Security：HTTP 鉴权 + WS 握手鉴权 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- MyBatis-Plus Spring Boot Starter -->
-        <dependency>
-            <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
-            <version>3.5.7</version>
-        </dependency>
-
-        <!-- MySQL Connector/J 是连接MySQL数据库所需的JDBC驱动程序 -->
-        <dependency>
-            <groupId>com.mysql</groupId>
-            <artifactId>mysql-connector-j</artifactId>
-            <version>9.5.0</version>
-        </dependency>
-
-        <!-- Lombok 通过注解简化Java代码，减少样板代码编写 -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>1.18.42</version>
-            <scope>provided</scope>
-        </dependency>
-
-        <!-- Spring Boot Validation Starter 支持Bean Validation API，用于数据校验 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-
-        <!-- Java JWT 库支持JSON Web Token (JWT) 的创建和验证 -->
-        <dependency>
-            <groupId>com.auth0</groupId>
-            <artifactId>java-jwt</artifactId>
-            <version>4.5.0</version>
-        </dependency>
-
-        <!-- Spring Boot Test Starter 包含测试所需的各种库，如JUnit, Mockito等 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- PageHelper Spring Boot Starter 分页插件集成，方便实现分页查询 -->
-        <dependency>
-            <groupId>com.github.pagehelper</groupId>
-            <artifactId>pagehelper-spring-boot-starter</artifactId>
-            <version>2.1.1</version>
-        </dependency>
-
-        <!-- Apache HttpClient 5.x 实现HTTP客户端通信 -->
-        <dependency>
-            <groupId>org.apache.httpcomponents.client5</groupId>
-            <artifactId>httpclient5</artifactId>
-            <version>5.5.1</version>
-        </dependency>
-
-        <!-- Apache HttpClient 4.x 兼容旧版本的HTTP客户端库 -->
-        <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>httpclient</artifactId>
-            <version>4.5.14</version>
-        </dependency>
-
-        <!-- Spring Data Redis Starter 整合Redis作为缓存或数据存储 -->
+        <!-- Redis：缓存 / 会话 / 分布式状态 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- OGNL 是一个开放源代码的Java表达式语言 -->
+        <!-- MyBatis-Plus：Boot 4 必须用 boot4-starter，boot3-starter 不兼容 -->
         <dependency>
-            <groupId>ognl</groupId>
-            <artifactId>ognl</artifactId>
-            <version>3.3.4</version>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot4-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
         </dependency>
 
-        <!-- Spring Security 提供了安全功能，如身份验证、授权等 -->
+        <!-- MySQL 驱动：仅运行期需要，编译期不直接引用 -->
         <dependency>
-            <groupId>org.springframework.security</groupId>
-            <artifactId>spring-security-crypto</artifactId>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
-        <!-- Spring Boot Mail Starter 提供邮件功能 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-mail</artifactId>
-        </dependency>
-
-        <!-- Docker Java 3.3.0 集成Docker API，用于与Docker交互 -->
+        <!-- Docker：core + zerodep 传输层（零外部依赖，原生支持 unix socket）
+             刻意不用聚合包 docker-java —— 它会拖进 jersey + netty 一大堆东西 -->
         <dependency>
             <groupId>com.github.docker-java</groupId>
             <artifactId>docker-java-core</artifactId>
-            <version>3.3.0</version>
         </dependency>
-
-        <!-- Docker Java 3.3.0 集成Docker API，用于与Docker交互 -->
         <dependency>
             <groupId>com.github.docker-java</groupId>
-            <artifactId>docker-java</artifactId>
-            <version>3.3.0</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-jdk14</artifactId>
-                </exclusion>
-            </exclusions>
+            <artifactId>docker-java-transport-zerodep</artifactId>
         </dependency>
 
-
-        <!-- Docker Java 3.3.0 集成Docker API，用于与Docker交互 -->
-        <dependency>
-            <groupId>com.github.docker-java</groupId>
-            <artifactId>docker-java-transport-httpclient5</artifactId>
-            <version>3.3.0</version>
-        </dependency>
-
-        <!-- Docker Java Netty 传输层 - unix socket 支持完善（httpclient5 传输层对 unix socket 支持有缺陷，会退化为 TCP 连接 localhost:2375） -->
-        <dependency>
-            <groupId>com.github.docker-java</groupId>
-            <artifactId>docker-java-transport-netty</artifactId>
-            <version>3.3.0</version>
-        </dependency>
-
-        <!-- StringTemplate 4 -->
-        <dependency>
-            <groupId>org.antlr</groupId>
-            <artifactId>ST4</artifactId>
-            <version>4.3</version>
-        </dependency>
-
-        <!-- Playwright 依赖 - HTMLUtil 插件需要此依赖来初始化浏览器 -->
-        <dependency>
-            <groupId>com.microsoft.playwright</groupId>
-            <artifactId>playwright</artifactId>
-            <version>1.57.0</version>
-        </dependency>
-
-        <!-- Thymeleaf Starter - HTMLUtil 插件需要此依赖 -->
+        <!-- 测试基础（JUnit 5、Mockito、AssertJ 等） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-thymeleaf</artifactId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
         </dependency>
-
-        <!-- GeneralBot API 依赖 - 提供了与GeneralBot交互的API -->
-        <dependency>
-            <groupId>com.github.zhygtx</groupId>
-            <artifactId>generalbot-api</artifactId>
-            <version>0.3.3</version>
-        </dependency>
-
-        <!-- Napcat 依赖 - 提供了与Napcat交互的API -->
-        <dependency>
-            <groupId>com.github.zhygtx</groupId>
-            <artifactId>napcat-spring-boot-starter</artifactId>
-            <version>0.0.1-SNAPSHOT</version>
-        </dependency>
-
     </dependencies>
 
     <build>
-        <finalName>bot</finalName>
-        <resources>
-            <resource>
-                <directory>src/main/resources</directory>
-                <includes>
-                    <include>**/*.*</include>
-                </includes>
-                <filtering>false</filtering>
-            </resource>
-        </resources>
+        <finalName>loom</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

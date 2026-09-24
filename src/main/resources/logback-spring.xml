@@ -29,7 +29,7 @@
     </appender>
 
 
-    <logger name="com.generalbot" level="DEBUG" />
+    <logger name="com.loom" level="DEBUG" />
 
     <!-- 根日志级别配置 -->
     <root level="INFO">
