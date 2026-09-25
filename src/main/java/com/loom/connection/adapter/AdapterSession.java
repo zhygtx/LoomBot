@@ -124,10 +124,6 @@ public final class AdapterSession implements IpcListener {
         return host.name();
     }
 
-    public long protocolViolations() {
-        return channel.protocolViolations();
-    }
-
     // ------------------------------------------------------------------
     // 通道映射
     // ------------------------------------------------------------------

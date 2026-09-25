@@ -46,6 +46,22 @@ final class ConnectionRuntime {
     /** 是否已向适配器发出过 conn.open，避免重复通知。 */
     volatile boolean adapterNotified;
 
+    /**
+     * 最近一次收到帧的时间戳（epoch millis），0 表示本次运行内还没收到过。
+     *
+     * <p>TODO(notify): 目前只被写入，还没有人读 —— 它是「长时间无消息」告警（D55）的数据源。
+     *
+     * <p>⚠️ 实现告警前必须先决定语义，<b>二者不可混用同一个字段</b>：
+     *
+     * <ul>
+     *   <li><b>通道是否还活着</b>：任何帧都更新（含心跳）—— 回答「连接是不是卡死了」
+     *   <li><b>有没有真实业务事件</b>：只更新业务帧 —— 回答「这个号是不是不活跃了」
+     * </ul>
+     *
+     * <p>若平台稳定发心跳却按第二种实现，本字段永远不更新、告警永不触发；反之按第一种 实现又想要第二种语义，则永远不告警。<b>两个都要就得是两个字段、两个阈值。</b>
+     */
+    volatile long lastFrameAt;
+
     ConnectionRuntime(long connectionId, String name, String connectionType) {
         this.connectionId = connectionId;
         this.name = name;
@@ -58,7 +74,14 @@ final class ConnectionRuntime {
         this.failureReason = "适配器未就绪（connectionType=" + connectionType + "）";
     }
 
-    /** 状态迁移到「重连中」，并累加失败计数。 */
+    /**
+     * 状态迁移到「重连中」，并累加失败计数。
+     *
+     * <p>TODO(notify): 断联通知（D54）要挂在这里。四个状态迁移方法就是「跃迁触发」的 天然落点 —— 通知必须由<b>跃迁</b>驱动，不能由「当前处于
+     * RECONNECTING」驱动， 否则带指数退避的重连会反复触发，一晚几百封邮件，用户会直接把通知关掉。
+     *
+     * <p>调用方需自行判断「上一状态是否为 ONLINE」以及静默窗口是否已过。
+     */
     void reconnecting(String reason) {
         this.state = ConnectionState.RECONNECTING;
         this.failureReason = reason;
@@ -70,8 +93,14 @@ final class ConnectionRuntime {
         this.state = ConnectionState.ONLINE;
         this.failureReason = null;
         this.consecutiveFailures = 0;
+        this.lastFrameAt = System.currentTimeMillis();
     }
 
+    /**
+     * 状态迁移到「不可重试的失败」。
+     *
+     * <p>TODO(notify): 这类失败（鉴权失败、配置非法）重连多少次都没用，<b>等不到恢复</b>， 所以通知应当<b>立即发出且不受静默窗口限制</b>（D54 第 4 条）。
+     */
     void failed(String reason) {
         this.state = ConnectionState.FAILED;
         this.failureReason = reason;

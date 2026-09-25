@@ -15,7 +15,8 @@
  * <p><b>本包不允许依赖任何业务模块</b>（{@code auth} / {@code system} / {@code connection} / {@code plugin} /
  * {@code workflow}）。反向依赖是允许的：业务模块可以依赖 common。
  *
- * <p>这条规则由 {@code ArchitectureTest} 强制，破坏时构建失败。
+ * <p>这条规则原本由 {@code ArchitectureTest}（ArchUnit）强制，破坏时构建失败。该测试已于 2026-09-25 全部移除（见 {@code
+ * docs/decisions.md} D59），所以它现在只是<b>约定</b>：破坏它不会再让构建失败。
  *
  * <h2>未来拆分</h2>
  *

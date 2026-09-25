@@ -50,7 +50,7 @@
  * <h2>边界规则</h2>
  *
  * <p>允许依赖 {@code common} 与 {@code runtime}（基础模块）。<b>不得依赖其他业务模块</b> （{@code auth} / {@code system} /
- * {@code plugin} / {@code workflow}）， 由 {@code ArchitectureTest} 强制。
+ * {@code plugin} / {@code workflow}）。这条规则原本由 {@code ArchitectureTest} 强制，该测试已于 2026-09-25 移除（D59）。
  *
  * <p>方向不落在数据库里：{@code ws_connection} 表没有 {@code direction} 列， 方向由 {@code connection_type}
  * 对应的适配器声明。这样「加一个平台」不需要改表结构。

@@ -50,9 +50,9 @@ public final class IpcChannel implements Closeable {
 
     private final Object writeLock = new Object();
     private final AtomicBoolean closing = new AtomicBoolean(false);
+
+    /** 协议违规累计次数。只在 {@code handleLine} 里自增，用于日志里的「第 N 次」。 */
     private final AtomicLong protocolViolations = new AtomicLong();
-    private final AtomicLong sentCount = new AtomicLong();
-    private final AtomicLong receivedCount = new AtomicLong();
 
     private volatile IpcListener listener = NOOP;
     private volatile Thread readerThread;
@@ -91,28 +91,10 @@ public final class IpcChannel implements Closeable {
                 writer.write(line);
                 writer.write('\n');
                 writer.flush();
-                sentCount.incrementAndGet();
             } catch (IOException e) {
                 log.warn("[{}] IPC 写入失败，通道可能已断开: {}", name, e.getMessage());
             }
         }
-    }
-
-    public boolean isClosing() {
-        return closing.get();
-    }
-
-    /** 协议违规累计次数。持续增长说明插件在污染 stdout（比如某处 print）。 */
-    public long protocolViolations() {
-        return protocolViolations.get();
-    }
-
-    public long sentCount() {
-        return sentCount.get();
-    }
-
-    public long receivedCount() {
-        return receivedCount.get();
     }
 
     private void readLoop() {
@@ -147,7 +129,6 @@ public final class IpcChannel implements Closeable {
         }
         try {
             IpcMessage message = codec.decode(line);
-            receivedCount.incrementAndGet();
             listener.onMessage(message);
         } catch (IpcProtocolException e) {
             long count = protocolViolations.incrementAndGet();

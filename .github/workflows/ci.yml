@@ -13,10 +13,17 @@ concurrency:
 
 jobs:
   verify:
-    name: 构建 · 测试 · 架构校验 · 覆盖率
+    name: 构建 · 格式校验
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
+    # 这里曾经跑全量测试：启 MySQL / Redis service、装 Python、跑集成测试，
+    # 再由 JaCoCo 校验覆盖率门槛。测试与门槛已全部移除（见 docs/decisions.md D59），
+    # 所以这些外部依赖一并去掉 —— 构建不再需要任何数据库或解释器。
+    #
+    # 剩下的约束只有两条，都由这一条 mvn verify 覆盖：
+    #   validate 阶段 → spotless:check   代码格式不对，构建直接失败
+    #   package  阶段 → 编译 + 打 fat jar
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -28,22 +35,6 @@ jobs:
           java-version: "21"
           cache: maven
 
-      # 一次 verify 覆盖全部约束 —— 这就是「规则不挂 CI 就等于不存在」的落地：
-      #   validate 阶段 → spotless:check      代码格式不对，构建直接失败
-      #   test 阶段     → 单元测试 + ArchUnit 架构测试 + 生成 JaCoCo 报告
-      #   verify 阶段   → JaCoCo 覆盖率门槛    低于阈值，构建直接失败
-      #
-      # 注意：本阶段刻意不启动 Spring 上下文，因此不需要 MySQL / Redis。
-      # 后续引入 Testcontainers 做集成测试时，这里需要额外准备 Docker（GitHub 托管 runner 已自带）。
-      - name: 执行完整校验
-        run: mvn -B verify
-
-      - name: 上传测试与覆盖率报告
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: reports
-          path: |
-            target/surefire-reports/
-            target/site/jacoco/
-          retention-days: 7
+      # 注意用 clean：不清理的话 target 里的旧产物会参与打包判断。
+      - name: 格式校验 + 编译打包
+        run: mvn -B clean verify

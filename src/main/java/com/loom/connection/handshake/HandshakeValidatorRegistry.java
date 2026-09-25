@@ -71,8 +71,4 @@ public final class HandshakeValidatorRegistry {
     //   ⚠️ 早期文档曾以「IPC 在热路径 + 适配器挂了连不进来」为由否定这个特性，
     //   那两个理由都不成立（握手是每连接一次；适配器不在线时反向连接本来也没用），
     //   已在 docs/适配器规范.md 里更正。
-
-    public boolean supports(String mode) {
-        return validators.containsKey(mode);
-    }
 }

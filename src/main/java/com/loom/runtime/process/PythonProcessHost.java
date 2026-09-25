@@ -116,16 +116,6 @@ public final class PythonProcessHost implements Closeable {
     }
 
     /**
-     * 子进程退出码。
-     *
-     * @throws IllegalThreadStateException 进程尚未退出时 —— 这是 {@link Process} 的既有约定， 刻意不吞掉：调用方必须先确认
-     *     {@link #isAlive()} 为 {@code false}，否则「拿到一个编造的退出码」比拿到异常更危险。
-     */
-    public int exitCode() {
-        return process.exitValue();
-    }
-
-    /**
      * 优雅关闭：发 {@code shutdown} → 等待 → destroy → 等待 → 强杀。
      *
      * <p>幂等，可重复调用。

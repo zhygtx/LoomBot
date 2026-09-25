@@ -526,6 +526,9 @@ public class ConnectionManager implements AdapterEvents {
         if (runtime == null) {
             return;
         }
+        // 静默检测的数据源（D55）。这里**无法区分心跳帧与业务帧** ——
+        // 将来若要按「有没有真实业务事件」告警，必须在这个入口做区分，而不是调个阈值了事。
+        runtime.lastFrameAt = System.currentTimeMillis();
         AdapterSession adapter = adaptersByType.get(runtime.connectionType);
         if (adapter == null) {
             log.warn("[{}] 收到数据但适配器未就绪，丢弃", runtime.name);

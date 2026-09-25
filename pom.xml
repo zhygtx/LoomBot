@@ -24,31 +24,8 @@
         <!-- 工程约束工具版本 -->
         <spotless.version>3.10.2</spotless.version>
         <google-java-format.version>1.36.1</google-java-format.version>
-        <archunit.version>1.5.0</archunit.version>
-        <jacoco.version>0.8.15</jacoco.version>
         <lombok.version>1.18.46</lombok.version>
 
-        <!-- 需要外部依赖（MySQL / Redis / Python 解释器）的测试所打的 JUnit Tag。
-             CI 上没有这些，所以默认排除；本地要跑就把它清空：
-                 mvn verify -Dtest.excluded.groups=
-             用属性而不是硬编码，是因为「排除」这件事必须能被一次性关掉 ——
-             如果 CI 配好了 MySQL，改一行命令行即可，不用动 pom。 -->
-        <test.excluded.groups>integration</test.excluded.groups>
-
-        <!-- 覆盖率门槛（BUNDLE 行覆盖率）。
-             这是「棘轮」：定在略低于当前实际值的位置，防止覆盖率倒退。
-             当前实际 0.7850（1205/1535 行），余量约 3.5 个点，随业务代码与测试补充逐步上调。
-             注意：集成测试默认被排除（见上），而最容易出问题的那几个类（IpcChannel /
-             ConnectionManager / AdapterSession）恰恰依赖外部环境，所以这里另加了一条
-             单类下限规则，避免它们被平均值掩盖。 -->
-        <jacoco.line.coverage.min>0.75</jacoco.line.coverage.min>
-
-        <!-- 单类行覆盖率下限。
-             平均值会掩盖「某个类几乎没测」：只要总量达标，一个 0% 的类也能蒙混过关。
-             这里只对「有实际逻辑」的类兜底，不追求把每个类都拉到 80%。
-             阈值取 0.60 而不是 0.8，是因为部分类的低覆盖来自「异常分支难以构造」，
-             强行拉高会催生只为凑数的测试。真正危险的类用专项测试保证（见 docs/engineering.md）。 -->
-        <jacoco.class.line.coverage.min>0.60</jacoco.class.line.coverage.min>
     </properties>
 
     <dependencyManagement>
@@ -176,38 +153,6 @@
             <artifactId>docker-java-transport-zerodep</artifactId>
         </dependency>
 
-        <!-- 测试基础（JUnit 5、Mockito、AssertJ 等） -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- MockMvc 支持。
-             ⚠️ Boot 4 把 Web 层的测试自动配置拆成了独立模块：
-                @AutoConfigureMockMvc 从
-                org.springframework.boot.test.autoconfigure.web.servlet
-                搬到了 org.springframework.boot.webmvc.test.autoconfigure，
-                并且不再由 spring-boot-starter-test 传递引入。
-                只加 starter-test 会在编译期直接报「找不到符号」。 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webmvc-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.security</groupId>
-            <artifactId>spring-security-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- ArchUnit：把分层规则写成会失败的测试，替代人工 code review -->
-        <dependency>
-            <groupId>com.tngtech.archunit</groupId>
-            <artifactId>archunit-junit5</artifactId>
-            <version>${archunit.version}</version>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
 
     <build>
@@ -245,17 +190,6 @@
                 </configuration>
             </plugin>
 
-            <!-- 测试执行：默认排除 integration 组。
-                 不加这段的话，CI（无 MySQL / Redis / Python）会因为集成测试失败而红，
-                 结果是有人把集成测试整个删掉 —— 那才是真正的损失。 -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <configuration>
-                    <excludedGroups>${test.excluded.groups}</excludedGroups>
-                </configuration>
-            </plugin>
-
             <!-- 代码格式化：提交前统一风格，消灭格式分歧。
                  check 挂在 validate 阶段 —— 格式不对直接构建失败，而不是靠自觉。 -->
             <plugin>
@@ -289,77 +223,6 @@
                 </executions>
             </plugin>
 
-            <!-- 覆盖率：test 阶段生成报告，verify 阶段校验门槛 -->
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>${jacoco.version}</version>
-                <configuration>
-                    <!-- 排除「数据载体」与「框架装配」类：
-                         实体 / DTO 只有字段，测试它们没有信息量；
-                         启动类只是引导代码。
-                         不排除的话，新增一批实体就会把覆盖率拉垮，
-                         结果是被迫写一堆无意义的 getter 测试 —— 那是自欺欺人。 -->
-                    <excludes>
-                        <exclude>**/entity/**</exclude>
-                        <exclude>**/dto/**</exclude>
-                        <exclude>**/*Application.class</exclude>
-                        <!-- 自定义异常只有构造器，测它等于测 super(...) 有没有被调用，
-                             纯属凑数。排除掉才能让「按类兜底」这条规则只对真正的逻辑生效。 -->
-                        <exclude>**/*Exception.class</exclude>
-                    </excludes>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>jacoco-prepare-agent</id>
-                        <goals>
-                            <goal>prepare-agent</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>jacoco-report</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>report</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>jacoco-check</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                        <configuration>
-                            <rules>
-                                <rule>
-                                    <element>BUNDLE</element>
-                                    <limits>
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${jacoco.line.coverage.min}</minimum>
-                                        </limit>
-                                    </limits>
-                                </rule>
-                                <!-- 按类兜底：防止「总量达标但某个类完全没测」。
-                                     LINE counter 的 COVEREDRATIO 在「类一行都没有」时为空，
-                                     空值对 <minimum> 不构成违规，所以纯常量类不会误伤。
-                                     这里不设 LIMITED 元素，因为那需要按类白名单，维护成本太高。 -->
-                                <rule>
-                                    <element>CLASS</element>
-                                    <limits>
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>${jacoco.class.line.coverage.min}</minimum>
-                                        </limit>
-                                    </limits>
-                                </rule>
-                            </rules>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 

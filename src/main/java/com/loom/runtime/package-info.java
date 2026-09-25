@@ -4,7 +4,8 @@
  * <h2>为什么是独立的基础模块</h2>
  *
  * <p>适配器宿主要被 {@code connection} 和 {@code workflow} <b>共用</b>。 如果把它留在 {@code plugin} 模块里，就会产生 {@code
- * connection → plugin} 依赖， 撞上「业务模块之间不得互相依赖」那条架构约束（见 {@code ArchitectureTest}）。
+ * connection → plugin} 依赖， 撞上「业务模块之间不得互相依赖」那条架构约束（原由 {@code ArchitectureTest} 强制，该测试已于 2026-09-25
+ * 移除，见 D59）。
  *
  * <p>所以它与 {@code common} 同级，属于**基础模块**： 业务模块可以依赖它，它不得依赖任何业务模块。
  *

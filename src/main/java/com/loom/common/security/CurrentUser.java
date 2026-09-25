@@ -15,8 +15,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
  * <p>于是「取当前用户 ID」这件事今天必然返回空。与其把这个空值散落到每个 Service 里 （半年后你会分不清哪些空值是「还没实现」、哪些是 bug），不如集中在这一个类里： auth
  * 模块落地时**只需要改这一个文件**。
  *
- * <p>{@link #name()} 是现在唯一真正可用的信息 —— 它来自 Spring Security 的 {@link Authentication}，测试里由
- * {@code @WithMockUser} 提供。
+ * <p>{@link #name()} 是现在唯一真正可用的信息 —— 它来自 Spring Security 的 {@link Authentication}。
  */
 public final class CurrentUser {
 
