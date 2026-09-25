@@ -17,8 +17,19 @@
     <properties>
         <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
         <mybatis-plus.version>3.5.17</mybatis-plus.version>
         <docker-java.version>3.7.1</docker-java.version>
+
+        <!-- 工程约束工具版本 -->
+        <spotless.version>3.10.2</spotless.version>
+        <google-java-format.version>1.36.1</google-java-format.version>
+        <archunit.version>1.5.0</archunit.version>
+
+        <!-- 覆盖率门槛（BUNDLE 行覆盖率）。
+             这是「棘轮」：定在略低于当前实际值的位置，防止覆盖率倒退。
+             当前实际约 83%，随业务代码与测试补充逐步上调。 -->
+        <jacoco.line.coverage.min>0.75</jacoco.line.coverage.min>
     </properties>
 
     <dependencyManagement>
@@ -53,6 +64,18 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
+        <!-- Actuator：健康检查 / 指标，供容器探针与监控使用 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- 参数校验：@Valid / @NotNull 等 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
         <!-- Redis：缓存 / 会话 / 分布式状态 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -64,6 +87,23 @@
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot4-starter</artifactId>
             <version>${mybatis-plus.version}</version>
+        </dependency>
+
+        <!-- Flyway：数据库迁移。启动时自动执行 db/migration 下未应用的脚本，
+             用 flyway_schema_history 表记录版本，替代「手动跑 SQL + 靠记忆」。
+
+             ⚠️ 必须用 spring-boot-starter-flyway，不能只加 flyway-core！
+                Spring Boot 4 把自动配置拆成了独立模块（spring-boot-flyway 等），
+                只放第三方 jar 到 classpath 不会触发任何迁移 —— 而且不报错，
+                表现为「应用正常启动但一张表都没建」，极难排查。
+             flyway-mysql 需单独加：Flyway 10 起把各数据库方言拆成了独立 artifact。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
         </dependency>
 
         <!-- MySQL 驱动：仅运行期需要，编译期不直接引用 -->
@@ -90,6 +130,19 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- ArchUnit：把分层规则写成会失败的测试，替代人工 code review -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -98,6 +151,93 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+            <!-- 代码格式化：提交前统一风格，消灭格式分歧。
+                 check 挂在 validate 阶段 —— 格式不对直接构建失败，而不是靠自觉。 -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless.version}</version>
+                <configuration>
+                    <java>
+                        <includes>
+                            <include>src/main/java/**/*.java</include>
+                            <include>src/test/java/**/*.java</include>
+                        </includes>
+                        <googleJavaFormat>
+                            <version>${google-java-format.version}</version>
+                            <!-- AOSP 风格：4 空格缩进、100 列，比默认的 2 空格更符合国内习惯 -->
+                            <style>AOSP</style>
+                        </googleJavaFormat>
+                        <removeUnusedImports/>
+                        <trimTrailingWhitespace/>
+                        <endWithNewline/>
+                    </java>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotless-check</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 覆盖率：test 阶段生成报告，verify 阶段校验门槛 -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <configuration>
+                    <!-- 排除「数据载体」与「框架装配」类：
+                         实体 / DTO 只有字段，测试它们没有信息量；
+                         启动类只是引导代码。
+                         不排除的话，新增一批实体就会把覆盖率拉垮，
+                         结果是被迫写一堆无意义的 getter 测试 —— 那是自欺欺人。 -->
+                    <excludes>
+                        <exclude>**/entity/**</exclude>
+                        <exclude>**/dto/**</exclude>
+                        <exclude>**/*Application.class</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>jacoco-prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>jacoco-report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>jacoco-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${jacoco.line.coverage.min}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

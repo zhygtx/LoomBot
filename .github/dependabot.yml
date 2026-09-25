@@ -1,0 +1,48 @@
+# Dependabot —— 自动依赖漏洞扫描与版本更新
+#
+# 为什么单人项目特别需要它：你不会有安全团队盯着 CVE。GitHub 检测到依赖存在
+# 已知漏洞时会自动开 PR，这是唯一能替你「值班」的机制，且完全免费。
+#
+# 配置要点：把更新分组，避免一次开十几个 PR 把人淹没 —— 没人看的 PR 等于没有 PR。
+
+version: 2
+updates:
+  # ---------- Maven 依赖 ----------
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Spring 全家桶合成一个 PR（它们必须同版本升级，拆开反而容易出问题）
+      spring:
+        patterns:
+          - "org.springframework*"
+          - "tools.jackson*"
+      # 其余依赖的补丁级更新合并成一个 PR
+      patch-updates:
+        patterns:
+          - "*"
+        update-types:
+          - patch
+
+  # ---------- GitHub Actions ----------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Shanghai
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "chore(ci)"

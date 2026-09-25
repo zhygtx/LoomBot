@@ -1,0 +1,30 @@
+# Git 属性 —— 统一换行符处理，避免 Windows/Linux 互相污染
+# 配合 .editorconfig 使用：.editorconfig 管编辑器，.gitattributes 管 git 仓库
+
+# 默认：由 git 自动识别文本文件，检出时统一为 LF
+* text=auto eol=lf
+
+# Windows 脚本保持 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件不做任何转换
+*.jar binary
+*.war binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.pdf binary
+
+# 锁文件：合并冲突时直接重新生成，不手工解决
+pnpm-lock.yaml merge=binary
+package-lock.json merge=binary
+
+# 让 git diff 能识别为语言（便于 review）
+*.java diff=java
+*.sql diff=sql
+*.md diff=markdown

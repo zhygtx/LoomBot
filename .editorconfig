@@ -1,0 +1,33 @@
+# EditorConfig —— 跨编辑器统一代码风格
+# https://editorconfig.org
+# 作用：无论用 IDEA / VS Code / Vim，缩进、换行、编码都一致。
+# 这是「零成本」的约束：写一次，所有编辑器自动遵守。
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# 前端与配置文件用 2 空格
+[*.{yml,yaml,json,js,ts,vue,html,css,scss,less}]
+indent_size = 2
+
+# Markdown 的行尾空格有意义（强制换行），不修剪
+[*.md]
+trim_trailing_whitespace = false
+
+# Windows 脚本必须用 CRLF
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
+
+# SQL 脚本
+[*.sql]
+indent_size = 4
+
+[Makefile]
+indent_style = tab

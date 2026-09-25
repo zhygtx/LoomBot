@@ -6,10 +6,22 @@
     <!-- 应用启动时间戳 -->
     <timestamp key="APP_START" datePattern="yyyy-MM-dd_HH-mm-ss"/>
 
+    <!--
+      日志格式中的 %X{traceId:-} 从 MDC 取 TraceId（见 TraceContext），
+      「:-」表示取不到时留空，避免定时任务等非请求线程打印出 "traceId=" 这样的残缺字段。
+
+      控制台额外输出 %thread，因为排查问题时最常问的是「哪个线程干的」。
+    -->
+    <property name="CONSOLE_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{50} - %msg%n"/>
+    <property name="FILE_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{50} - %msg%n"/>
+
     <!-- 控制台输出 -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n</pattern>
+            <pattern>${CONSOLE_PATTERN}</pattern>
+            <charset>UTF-8</charset>
         </encoder>
     </appender>
 
@@ -24,16 +36,25 @@
             <totalSizeCap>3GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>${FILE_PATTERN}</pattern>
+            <charset>UTF-8</charset>
         </encoder>
     </appender>
 
+    <!-- 异步写文件：避免磁盘 IO 阻塞业务线程。
+         discardingThreshold=0 表示队列满时也不丢弃任何日志（宁可阻塞也不丢，排查问题优先）。 -->
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="FILE" />
+        <queueSize>1024</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <includeCallerData>false</includeCallerData>
+    </appender>
 
     <logger name="com.loom" level="DEBUG" />
 
     <!-- 根日志级别配置 -->
     <root level="INFO">
         <appender-ref ref="CONSOLE" />
-        <appender-ref ref="FILE" />
+        <appender-ref ref="ASYNC_FILE" />
     </root>
 </configuration>
