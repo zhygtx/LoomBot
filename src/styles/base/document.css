@@ -1,0 +1,22 @@
+html {
+  background: var(--sys-color-canvas);
+  color: var(--sys-color-text);
+  font-family: var(--ref-font-sans);
+}
+
+body {
+  min-inline-size: 20rem;
+  min-block-size: 100dvh;
+  background:
+    radial-gradient(circle at 20% 10%, rgb(70 95 255 / 8%), transparent 28rem),
+    var(--sys-color-canvas);
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--sys-color-action-primary) 24%, transparent);
+}

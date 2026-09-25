@@ -1,0 +1,9 @@
+@layer reset, tokens, base, components, utilities, overrides;
+
+@import './tokens/primitives.css' layer(tokens);
+@import './tokens/semantic.css' layer(tokens);
+@import './tokens/components.css' layer(tokens);
+@import './themes/default.css' layer(tokens);
+@import './base/reset.css' layer(reset);
+@import './base/document.css' layer(base);
+@import '../modules/auth/styles/auth-form.css' layer(components);

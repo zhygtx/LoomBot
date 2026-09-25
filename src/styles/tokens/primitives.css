@@ -1,0 +1,36 @@
+:root {
+  --ref-color-neutral-0: #ffffff;
+  --ref-color-neutral-50: #f6f7fb;
+  --ref-color-neutral-100: #eceef4;
+  --ref-color-neutral-200: #d9dde8;
+  --ref-color-neutral-500: #667085;
+  --ref-color-neutral-700: #344054;
+  --ref-color-neutral-900: #101828;
+  --ref-color-blue-50: #eef4ff;
+  --ref-color-blue-500: #465fff;
+  --ref-color-blue-600: #3549d8;
+  --ref-color-red-500: #e5484d;
+  --ref-color-red-600: #c83f44;
+
+  --ref-space-0: 0;
+  --ref-space-1: 0.25rem;
+  --ref-space-2: 0.5rem;
+  --ref-space-3: 0.75rem;
+  --ref-space-4: 1rem;
+  --ref-space-5: 1.25rem;
+  --ref-space-6: 1.5rem;
+  --ref-space-7: 2rem;
+  --ref-space-8: 2.5rem;
+  --ref-space-10: 3rem;
+
+  --ref-radius-small: 0.5rem;
+  --ref-radius-medium: 0.75rem;
+  --ref-radius-large: 1rem;
+  --ref-radius-round: 999rem;
+
+  --ref-font-sans: Inter, 'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --ref-font-mono: 'JetBrains Mono', 'Cascadia Code', monospace;
+
+  --ref-duration-fast: 120ms;
+  --ref-duration-normal: 200ms;
+}

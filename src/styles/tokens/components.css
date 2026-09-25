@@ -1,0 +1,20 @@
+:root {
+  --cmp-field-height: 3.25rem;
+  --cmp-field-border-width: 0.0625rem;
+  --cmp-field-radius: var(--ref-radius-medium);
+  --cmp-field-padding-inline: var(--sys-space-4);
+
+  --cmp-button-border-width: 0.0625rem;
+  --cmp-button-radius: var(--ref-radius-medium);
+  --cmp-button-font: var(--sys-typography-control);
+  --cmp-button-gap: var(--sys-space-2);
+  --cmp-button-height-small: 2rem;
+  --cmp-button-height-medium: 2.5rem;
+  --cmp-button-height-large: 3rem;
+  --cmp-button-padding-small: var(--sys-space-3);
+  --cmp-button-padding-medium: var(--sys-space-4);
+  --cmp-button-padding-large: var(--sys-space-5);
+
+  --cmp-surface-border-width: 0.0625rem;
+  --cmp-surface-radius: var(--ref-radius-large);
+}
