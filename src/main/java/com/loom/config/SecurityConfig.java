@@ -1,7 +1,10 @@
 package com.loom.config;
 
+import com.loom.auth.security.JwtAuthenticationFilter;
 import com.loom.common.exception.RestAccessDeniedHandler;
 import com.loom.common.exception.RestAuthenticationEntryPoint;
+import java.util.List;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -9,9 +12,11 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 /**
  * Spring Security 全局配置。
@@ -31,10 +36,10 @@ import org.springframework.security.web.SecurityFilterChain;
  * <p>CSRF 攻击依赖浏览器自动携带 Cookie。我们不用 Cookie 认证（token 放在请求头）， 因此 CSRF 不成立。这是无状态 API
  * 的标准做法，不是「为了省事关掉安全功能」。
  *
- * <h2>当前放行清单</h2>
+ * <h2>放行清单的判据</h2>
  *
- * <p>注意这里目前是<b>地基阶段的最小配置</b>，真正的权限判定（{@code @ss.hasPermi(...)}） 要等 auth 模块落地。届时 {@code
- * anyRequest().authenticated()} 会细化到每个接口。
+ * <p>只有一个判据：<b>这个端点在调用时，调用者是否可能还没有令牌</b>。登录、注册、 发验证码、重置密码 —— 用户此刻必然没有令牌，这是它们存在的意义。除此之外一律 {@code
+ * authenticated()}，包括「登出」和「我是谁」。清单越短越好，每多一条都要能回答这个问题。
  */
 @Configuration
 @EnableWebSecurity
@@ -43,17 +48,27 @@ public class SecurityConfig {
 
     private final RestAuthenticationEntryPoint authenticationEntryPoint;
     private final RestAccessDeniedHandler accessDeniedHandler;
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final CorsProperties corsProperties;
 
     public SecurityConfig(
             RestAuthenticationEntryPoint authenticationEntryPoint,
-            RestAccessDeniedHandler accessDeniedHandler) {
+            RestAccessDeniedHandler accessDeniedHandler,
+            JwtAuthenticationFilter jwtAuthenticationFilter,
+            CorsProperties corsProperties) {
         this.authenticationEntryPoint = authenticationEntryPoint;
         this.accessDeniedHandler = accessDeniedHandler;
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.corsProperties = corsProperties;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) {
         http.csrf(AbstractHttpConfigurer::disable)
+                // CORS 必须挂在安全链上。只注册一个 CorsFilter bean 也能工作，
+                // 但那样预检请求会先撞上认证规则 —— 预检请求不带 Authorization 头，
+                // 于是浏览器看到 401，控制台报的是「CORS 错误」，与真实原因差了十万八千里。
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
@@ -61,6 +76,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(
                         auth ->
                                 auth
+                                        // 认证入口：调用它们时用户必然还没有令牌
+                                        .requestMatchers(
+                                                "/api/auth/login",
+                                                "/api/auth/register",
+                                                "/api/auth/email-code",
+                                                "/api/auth/password/reset")
+                                        .permitAll()
                                         // 连通性探针
                                         .requestMatchers("/api/system/ping")
                                         .permitAll()
@@ -77,17 +99,52 @@ public class SecurityConfig {
                 .exceptionHandling(
                         e ->
                                 e.authenticationEntryPoint(authenticationEntryPoint)
-                                        .accessDeniedHandler(accessDeniedHandler));
+                                        .accessDeniedHandler(accessDeniedHandler))
+                // 放在用户名密码过滤器之前：我们是无状态的，那个过滤器在本工程里永远是空跑，
+                // 但位置决定了「认证在授权之前完成」这件事的顺序
+                .addFilterBefore(
+                        jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
     /**
-     * 密码编码器。
+     * 阻止 {@link JwtAuthenticationFilter} 被 Servlet 容器**再注册一次**。
      *
-     * <p>用 BCrypt 而非 MD5/SHA —— 后者是快速哈希，GPU 可以每秒尝试数十亿次。 BCrypt 自带盐值且可调计算成本，是密码存储的当前标准。
+     * <p>它是 {@code @Component}，Boot 会把所有 {@code Filter} bean 自动注册到 Servlet 容器上， 于是它会执行两遍：一遍在 Spring
+     * Security 过滤器链里（我们想要的位置），一遍在所有请求上 （任何路径、包括静态资源）。第二遍的后果不只是浪费 —— 它会在 SecurityContext 被清理之后
+     * 又塞回一个认证，出现「同一个请求，两处看到的身份不一样」。
+     *
+     * <p>这个坑的隐蔽之处在于：功能测试全过，只有并发或审计日志里才看得出异常。 传统写法是给过滤器去掉 {@code @Component} 再手工 new，但那样它就不能注入依赖了。
      */
     @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+    public FilterRegistrationBean<JwtAuthenticationFilter> jwtFilterRegistration(
+            JwtAuthenticationFilter filter) {
+        FilterRegistrationBean<JwtAuthenticationFilter> registration =
+                new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    /**
+     * 跨域配置。
+     *
+     * <p>{@code allowCredentials} 保持 {@code false}：认证靠 {@code Authorization} 请求头， 不依赖 Cookie。设为
+     * {@code true} 只会在「来源白名单 + 凭据」的组合上引入一类 需要额外小心的场景，而我们不需要它。
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(corsProperties.allowedOrigins());
+        configuration.setAllowedMethods(
+                List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowCredentials(false);
+        // 预检结果缓存 1 小时：否则每个跨域请求前都要多一次往返，
+        // 在「登录 → 立刻拉用户信息 → 再拉权限」这种连击下体感很明显
+        configuration.setMaxAge(3600L);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
     }
 }

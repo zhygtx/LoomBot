@@ -15,30 +15,29 @@ package com.loom.common.notify;
  * <p>因为 {@code auth} 和 {@code connection} 都要用它 —— 那样它就成了「第二个共享内核」。 而放进 {@code common} 又带着 SMTP 这种外部
  * IO（{@code common} 未来要抽成独立 jar）。 <b>两边都不合适，说明分类维度选错了</b>：不该按「功能」切，该按「机制 / 策略」切。
  *
+ * <p>所以 <b>接口在这里，实现不在</b>：SMTP 与 {@code notify_log} 的落地类放在 {@code com.loom.config.notify}（全工程唯一碰
+ * SMTP 的地方）。本包保持「只有技术词汇、 没有任何 IO」—— 将来抽成 {@code loom-common} jar 时可以直接搬走。
+ *
  * <h2>⚠️ 实现约定（实现时不要违背）</h2>
  *
  * <ol>
- *   <li><b>必须异步</b>：SMTP 超时可达数十秒，绝不能阻塞连接状态机或注册接口。 实现类应标注 {@code @Async}（{@code LoomApplication} 已有
+ *   <li><b>必须异步</b>：SMTP 超时可达数十秒，绝不能阻塞连接状态机或注册接口。 实现类标注 {@code @Async}（{@code LoomApplication} 已有
  *       {@code @EnableAsync}）。
  *   <li><b>失败不得抛出业务异常</b>：邮件发不出去<b>不是</b>业务失败。注册成功但验证码没送达， 那是「重发」问题，不是「注册失败」。抛异常会导致「邮件服务抖动 →
- *       用户注册不了」。 实现应吞掉异常并记录 {@code notify_log}。
+ *       用户注册不了」。 实现吞掉异常并记录 {@code notify_log}。
  *   <li><b>入参只允许基本类型 / String</b>：这是「{@code common} 不得依赖业务模块」这条规则的必然结果。它同时也是好事 —— 逼着调用方把「要发什么」想清楚。
  * </ol>
  *
- * <h2>TODO(notify): 落地清单</h2>
- *
- * <p>目前这是<b>唯一的入口</b>，尚无实现。按顺序做：
+ * <h2>落地情况（原 TODO 清单）</h2>
  *
  * <ol>
- *   <li>加 {@code spring-boot-starter-mail}。<b>注意用 starter 而不是只加库</b> —— Boot 4 的自动配置拆分后，只加 {@code
- *       jakarta.mail} 会静默不生效（见 {@code environment.md} 的同类教训）。
- *   <li>写 {@code SmtpMailSender} 实现，放 {@code com.loom.config}（唯一碰 SMTP 的地方）。
- *   <li>建 {@code notify_log} 表：收件人、模板、主题、状态、错误摘要、时间。 <b>没有它，用户说「没收到邮件」时你无法区分「没发」还是「发了没到」</b>。
- *   <li>模板放 {@code classpath:templates/notify/*.html}，不要做模板管理界面。
- *   <li>接两个调用方：{@code auth} 的注册验证码、{@code connection} 的断联通知。
+ *   <li>✅ {@code spring-boot-starter-mail}（注意用 starter 而不是只加库，见 {@code environment.md} 第 20 条）
+ *   <li>✅ {@code SmtpMailSender} 实现，在 {@code com.loom.config.notify}
+ *   <li>✅ {@code notify_log} 表（{@code V4__init_notify_log.sql}）：收件人、业务类型、主题、状态、错误摘要、时间
+ *   <li>⬜ 模板放 {@code classpath:templates/notify/*.html} —— 目前是纯文本，两个调用方都还不需要富文本
+ *   <li>🔶 调用方：{@code auth} 的注册 / 重置密码验证码<b>已接</b>；{@code connection} 的断联通知<b>未接</b> （触发规则见 {@code
+ *       decisions.md} D54 / D55）
  * </ol>
- *
- * <p>断联通知的具体触发规则见 {@code decisions.md} 的 D54（跃迁触发 + 静默窗口） 与 D55（无消息检测的两种语义，实现前必须二选一）。
  */
 public interface MailSender {
 
@@ -47,9 +46,11 @@ public interface MailSender {
      *
      * <p>实现必须<b>异步且不抛业务异常</b>：失败只记日志与 {@code notify_log}。
      *
+     * @param bizType 业务类型，由调用方定义（如 {@code REGISTER}），本层<b>不理解它的含义</b>， 只原样写进 {@code
+     *     notify_log}。之所以要这个参数而不是事后去猜：用户说「没收到验证码」时， 第一个要回答的问题是「哪一类邮件、发的哪一次」。
      * @param to 收件人地址
      * @param subject 主题
      * @param text 正文（纯文本；需要富文本时另加方法，不要在这里塞 HTML 字符串）
      */
-    void sendText(String to, String subject, String text);
+    void sendText(String bizType, String to, String subject, String text);
 }

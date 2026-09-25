@@ -31,17 +31,23 @@ public enum ErrorCode {
     // ---------- 2xxxxx 认证授权 ----------
     UNAUTHORIZED(200000, "未登录或登录已过期"),
     FORBIDDEN(200001, "没有操作权限"),
-    LOGIN_FAILED(200002, "用户名或密码错误"),
+    // 刻意不写成「邮箱不存在」与「密码错误」两条 —— 那等于提供一个免费的
+    // 「这个邮箱注册过没有」查询接口。两种情况共用一个码与一句文案。
+    LOGIN_FAILED(200002, "邮箱或密码错误"),
     ACCOUNT_DISABLED(200003, "账号已被停用"),
+    EMAIL_CODE_INVALID(200004, "验证码错误或已过期"),
+    EMAIL_CODE_TOO_FREQUENT(200005, "验证码发送过于频繁，请稍后再试"),
+    EMAIL_CODE_ATTEMPTS_EXCEEDED(200006, "验证码错误次数过多，请重新获取"),
 
     // ---------- 3xxxxx 系统管理 ----------
     USER_NOT_FOUND(300000, "用户不存在"),
-    USERNAME_EXISTS(300001, "用户名已存在"),
+    ACCOUNT_EXISTS(300001, "账号已存在"),
     ROLE_NOT_FOUND(300002, "角色不存在"),
     ROLE_CODE_EXISTS(300003, "角色标识已存在"),
     BUILTIN_ROLE_READONLY(300004, "内置角色不允许修改或删除"),
     PERMISSION_NOT_FOUND(300005, "权限不存在"),
     PERMISSION_CODE_EXISTS(300006, "权限串已存在"),
+    EMAIL_EXISTS(300007, "邮箱已被注册"),
 
     // ---------- 4xxxxx 插件 ----------
     PLUGIN_NOT_FOUND(400000, "插件不存在"),

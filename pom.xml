@@ -20,6 +20,7 @@
 
         <mybatis-plus.version>3.5.17</mybatis-plus.version>
         <docker-java.version>3.7.1</docker-java.version>
+        <jjwt.version>0.13.0</jjwt.version>
 
         <!-- 工程约束工具版本 -->
         <spotless.version>3.10.2</spotless.version>
@@ -58,6 +59,39 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!-- 邮件：注册验证码 / 找回密码验证码 / 断联通知。
+             ⚠️ 同 Flyway 的教训 —— 必须用 starter，只加 jakarta.mail 不会触发 Boot 4 的
+                自动配置，而且失败是静默的（见 environment.md 第 20 条）。
+             配了 spring.mail.host 才会有 JavaMailSender bean；没配时 MailConfig 走
+                 LoggingMailSender（把邮件内容写日志，供本机开发用），见 docs/decisions.md D53。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
+        <!-- JWT：登录令牌的签名与校验。
+             三个 artifact 缺一不可 —— api 是编译期接口，impl 与 jackson 是运行期实现，
+             jjwt 用 SPI 在运行时发现它们（只加 api 会在运行期抛 UnsupportedJwtException）。
+             jackson 扩展依赖 Jackson 2，与本工程 Boot 4 的 Jackson 3 并存是有意为之，
+             理由见 environment.md 第 5 条（docker-java 同样如此）。 -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Actuator：健康检查 / 指标，供容器探针与监控使用 -->
