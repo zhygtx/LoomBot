@@ -36,7 +36,7 @@ public class ReverseEndpointRegistry {
         if (existing == null || existing == connectionId) {
             return true;
         }
-        log.error("端点路径冲突: {} 已被连接 {} 占用，连接 {} 注册失败", path, existing, connectionId);
+        log.error("端点路径冲突：已被连接 {} 占用，连接 {} 注册失败", existing, connectionId);
         return false;
     }
 

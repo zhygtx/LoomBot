@@ -1,8 +1,8 @@
 package com.loom.connection.manager;
 
-import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.BinaryMessage;
@@ -33,9 +33,11 @@ final class ForwardClientHandler extends AbstractWebSocketHandler {
 
     private final ConnectionManager manager;
     private final long connectionId;
-    private final Queue<String> pending = new ConcurrentLinkedQueue<>();
+    private final Object stateLock = new Object();
+    private final Queue<PendingFrame> pending = new ArrayDeque<>();
 
-    private volatile ConnectionHandle handle;
+    private ConnectionHandle handle;
+    private boolean closed;
 
     ForwardClientHandler(ConnectionManager manager, long connectionId) {
         this.manager = manager;
@@ -43,40 +45,58 @@ final class ForwardClientHandler extends AbstractWebSocketHandler {
     }
 
     /** 握手完成后由管理器调用，关联句柄并回放缓冲的帧。 */
-    void attach(ConnectionHandle handle) {
-        this.handle = handle;
-        String buffered;
-        while ((buffered = pending.poll()) != null) {
-            manager.onFrame(handle, buffered);
+    boolean attach(ConnectionHandle handle) {
+        synchronized (stateLock) {
+            if (closed) {
+                pending.clear();
+                return false;
+            }
+            this.handle = handle;
+            PendingFrame buffered;
+            while ((buffered = pending.poll()) != null) {
+                buffered.deliver(manager, handle);
+            }
+            return true;
         }
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-        deliver(message.getPayload());
+        deliver(PendingFrame.text(message.getPayload()));
     }
 
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
-        deliver(new String(message.getPayload().array(), StandardCharsets.UTF_8));
+        ByteBuffer buffer = message.getPayload().asReadOnlyBuffer();
+        byte[] bytes = new byte[buffer.remaining()];
+        buffer.get(bytes);
+        deliver(PendingFrame.binary(bytes));
     }
 
-    private void deliver(String payload) {
-        ConnectionHandle current = handle;
-        if (current == null) {
-            if (pending.size() >= MAX_PENDING) {
-                log.warn("[连接 {}] 握手窗口内缓冲已满，丢弃一帧", connectionId);
+    private void deliver(PendingFrame frame) {
+        synchronized (stateLock) {
+            if (closed) {
                 return;
             }
-            pending.add(payload);
-            return;
+            if (handle == null) {
+                if (pending.size() >= MAX_PENDING) {
+                    log.warn("[连接 {}] 握手窗口内缓冲已满，丢弃一帧", connectionId);
+                    return;
+                }
+                pending.add(frame);
+                return;
+            }
+            frame.deliver(manager, handle);
         }
-        manager.onFrame(current, payload);
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        ConnectionHandle current = handle;
+        ConnectionHandle current;
+        synchronized (stateLock) {
+            closed = true;
+            current = handle;
+        }
         if (current != null) {
             manager.onHandleClosed(current, "对端关闭 " + status);
         } else {
@@ -95,5 +115,23 @@ final class ForwardClientHandler extends AbstractWebSocketHandler {
             return;
         }
         log.warn("[连接 {}] 传输异常: {}", connectionId, exception.getMessage());
+    }
+
+    private record PendingFrame(String text, byte[] binary) {
+        static PendingFrame text(String value) {
+            return new PendingFrame(value, null);
+        }
+
+        static PendingFrame binary(byte[] value) {
+            return new PendingFrame(null, value);
+        }
+
+        void deliver(ConnectionManager manager, ConnectionHandle handle) {
+            if (binary == null) {
+                manager.onFrame(handle, text);
+            } else {
+                manager.onBinaryFrame(handle, binary);
+            }
+        }
     }
 }

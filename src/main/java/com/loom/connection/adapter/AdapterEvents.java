@@ -1,6 +1,7 @@
 package com.loom.connection.adapter;
 
 import java.util.Map;
+import java.util.concurrent.CompletionStage;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -29,7 +30,7 @@ public interface AdapterEvents {
      *
      * @return 成功时返回 handleId；失败返回 {@code null}（原因由本方法自行记录）
      */
-    String openForward(
+    CompletionStage<String> openForward(
             AdapterSession session, long connectionId, String url, Map<String, String> headers);
 
     /** 适配器请求在通道上发送数据。 */

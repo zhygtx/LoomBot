@@ -5,12 +5,17 @@ import com.loom.auth.domain.EmailCodeScene;
 import com.loom.common.api.ErrorCode;
 import com.loom.common.exception.BusinessException;
 import com.loom.common.notify.MailSender;
+import com.loom.system.service.SystemConfigService;
 import java.security.SecureRandom;
 import java.util.List;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 邮箱验证码的生成、校验与频率限制。
@@ -47,6 +52,36 @@ public class EmailCodeService {
     private static final String KEY_CODE = "auth:code:";
     private static final String KEY_COOLDOWN = "auth:code:cooldown:";
     private static final String KEY_ATTEMPTS = "auth:code:attempts:";
+    private static final String KEY_RESERVATION = "auth:code:reservation:";
+
+    private static final DefaultRedisScript<Long> RESERVE_SEND_SCRIPT =
+            new DefaultRedisScript<>(
+                    "if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end; "
+                            + "redis.call('SET', KEYS[1], '1', 'PX', ARGV[2]); "
+                            + "redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[3]); "
+                            + "redis.call('DEL', KEYS[3]); return 1;",
+                    Long.class);
+
+    private static final DefaultRedisScript<Long> RESERVE_VERIFY_SCRIPT =
+            new DefaultRedisScript<>(
+                    "local code=redis.call('GET', KEYS[1]); "
+                            + "if not code then return -1 end; "
+                            + "if redis.call('EXISTS', KEYS[3]) == 1 then return -1 end; "
+                            + "local attempts=tonumber(redis.call('GET', KEYS[2]) or '0'); "
+                            + "local max=tonumber(ARGV[2]); if attempts >= max then return -2 end; "
+                            + "if code ~= ARGV[1] then "
+                            + "local count=redis.call('INCR', KEYS[2]); "
+                            + "if count == 1 then redis.call('PEXPIRE', KEYS[2], ARGV[3]); end; "
+                            + "if count >= max then return -2 end; return 0; end; "
+                            + "redis.call('SET', KEYS[3], ARGV[4], 'PX', ARGV[3]); return 1;",
+                    Long.class);
+
+    private static final DefaultRedisScript<Long> FINISH_VERIFY_SCRIPT =
+            new DefaultRedisScript<>(
+                    "if redis.call('GET', KEYS[3]) ~= ARGV[1] then return 0 end; "
+                            + "if ARGV[2] == 'commit' then redis.call('DEL', KEYS[1], KEYS[2]); end; "
+                            + "redis.call('DEL', KEYS[3]); return 1;",
+                    Long.class);
 
     /** 6 位数字：够用（配合尝试次数上限）且便于从邮件里照着敲。 */
     private static final int CODE_MODULUS = 1_000_000;
@@ -55,16 +90,19 @@ public class EmailCodeService {
     private final AuthProperties properties;
     private final UserService userService;
     private final MailSender mailSender;
+    private final SystemConfigService systemConfigService;
 
     public EmailCodeService(
             StringRedisTemplate redis,
             AuthProperties properties,
             UserService userService,
-            MailSender mailSender) {
+            MailSender mailSender,
+            SystemConfigService systemConfigService) {
         this.redis = redis;
         this.properties = properties;
         this.userService = userService;
         this.mailSender = mailSender;
+        this.systemConfigService = systemConfigService;
     }
 
     /**
@@ -77,6 +115,17 @@ public class EmailCodeService {
      *     ErrorCode#EMAIL_EXISTS}）
      */
     public void send(EmailCodeScene scene, String email) {
+        systemConfigService.requireEnabled(
+                SystemConfigService.AUTH_EMAIL_CODE_ENABLED, ErrorCode.EMAIL_CODE_DISABLED);
+        if (scene == EmailCodeScene.REGISTER) {
+            systemConfigService.requireEnabled(
+                    SystemConfigService.AUTH_REGISTER_ENABLED, ErrorCode.REGISTRATION_DISABLED);
+        } else if (scene == EmailCodeScene.RESET_PASSWORD) {
+            systemConfigService.requireEnabled(
+                    SystemConfigService.AUTH_PASSWORD_RESET_ENABLED,
+                    ErrorCode.PASSWORD_RESET_DISABLED);
+        }
+        email = UserService.normalizeEmail(email);
         if (!sceneAllowsSending(scene, email)) {
             // 防枚举：重置密码场景下邮箱未注册时，对外与成功完全一致（连冷却都不占用，
             // 否则「第一次成功、第二次报冷却」本身又成了一个可观测的差异）
@@ -85,52 +134,70 @@ public class EmailCodeService {
 
         String scope = scope(scene, email);
         String cooldownKey = KEY_COOLDOWN + scope;
-        if (Boolean.TRUE.equals(redis.hasKey(cooldownKey))) {
+        String code = "%06d".formatted(RANDOM.nextInt(CODE_MODULUS));
+        Long reserved =
+                redis.execute(
+                        RESERVE_SEND_SCRIPT,
+                        List.of(cooldownKey, KEY_CODE + scope, KEY_ATTEMPTS + scope),
+                        code,
+                        String.valueOf(properties.emailCodeCooldown().toMillis()),
+                        String.valueOf(properties.emailCodeTtl().toMillis()));
+        if (!Long.valueOf(1L).equals(reserved)) {
             throw new BusinessException(
                     ErrorCode.EMAIL_CODE_TOO_FREQUENT,
                     "验证码已发送，请 %d 秒后再试".formatted(properties.emailCodeCooldown().toSeconds()));
         }
 
-        String code = "%06d".formatted(RANDOM.nextInt(CODE_MODULUS));
-        redis.opsForValue().set(KEY_CODE + scope, code, properties.emailCodeTtl());
-        // 新验证码 = 新的尝试预算。不清的话，上一次的失败次数会继续压着新验证码，
-        // 用户重发之后仍然收到「错误次数过多」—— 一个非常像 bug 的正常行为。
-        redis.delete(KEY_ATTEMPTS + scope);
-        redis.opsForValue().set(cooldownKey, "1", properties.emailCodeCooldown());
-
         mailSender.sendText(scene.name(), email, subject(scene), body(scene, code));
     }
 
     /**
-     * 校验验证码，通过后立即销毁（一次性）。
+     * 校验并占用验证码。数据库事务提交后销毁；回滚时释放占用，允许用户重试。
      *
      * @throws BusinessException 验证码错误 / 已过期 / 尝试次数超限
      */
     public void verify(EmailCodeScene scene, String email, String code) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+                || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            throw new IllegalStateException("验证码校验必须在数据库事务中执行");
+        }
+        email = UserService.normalizeEmail(email);
         String scope = scope(scene, email);
+        String codeKey = KEY_CODE + scope;
         String attemptsKey = KEY_ATTEMPTS + scope;
-
-        if (currentAttempts(attemptsKey) >= properties.emailCodeMaxAttempts()) {
+        String reservationKey = KEY_RESERVATION + scope;
+        String reservationId = UUID.randomUUID().toString();
+        Long result =
+                redis.execute(
+                        RESERVE_VERIFY_SCRIPT,
+                        List.of(codeKey, attemptsKey, reservationKey),
+                        code,
+                        String.valueOf(properties.emailCodeMaxAttempts()),
+                        String.valueOf(properties.emailCodeTtl().toMillis()),
+                        reservationId);
+        if (Long.valueOf(1L).equals(result)) {
+            registerReservationCompletion(codeKey, attemptsKey, reservationKey, reservationId);
+            return;
+        }
+        if (Long.valueOf(-2L).equals(result)) {
             throw new BusinessException(ErrorCode.EMAIL_CODE_ATTEMPTS_EXCEEDED);
         }
+        throw new BusinessException(ErrorCode.EMAIL_CODE_INVALID);
+    }
 
-        String expected = redis.opsForValue().get(KEY_CODE + scope);
-        if (expected == null) {
-            // 「没发过」和「已过期」在这里是同一件事：都无法通过校验，
-            // 而对用户来说「请重新获取验证码」是同一个动作。
-            throw new BusinessException(ErrorCode.EMAIL_CODE_INVALID);
-        }
-        if (!expected.equals(code)) {
-            Long count = redis.opsForValue().increment(attemptsKey);
-            if (count != null && count == 1L) {
-                // 只在第一次自增时设 TTL：否则每次失败都续期，攻击者可以靠持续尝试
-                // 让这个计数器永不过期
-                redis.expire(attemptsKey, properties.emailCodeTtl());
-            }
-            throw new BusinessException(ErrorCode.EMAIL_CODE_INVALID);
-        }
-
-        redis.delete(List.of(KEY_CODE + scope, attemptsKey));
+    private void registerReservationCompletion(
+            String codeKey, String attemptsKey, String reservationKey, String reservationId) {
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCompletion(int status) {
+                        redis.execute(
+                                FINISH_VERIFY_SCRIPT,
+                                List.of(codeKey, attemptsKey, reservationKey),
+                                reservationId,
+                                status == STATUS_COMMITTED ? "commit" : "rollback");
+                    }
+                });
     }
 
     /**
@@ -156,20 +223,6 @@ public class EmailCodeService {
                 yield true;
             }
         };
-    }
-
-    private int currentAttempts(String attemptsKey) {
-        String raw = redis.opsForValue().get(attemptsKey);
-        if (raw == null) {
-            return 0;
-        }
-        try {
-            return Integer.parseInt(raw);
-        } catch (NumberFormatException e) {
-            // 值被手工改坏时按「没有失败过」处理，而不是让校验永远失败
-            log.warn("验证码尝试次数的值不是数字，已按 0 处理: {}", raw);
-            return 0;
-        }
     }
 
     private static String scope(EmailCodeScene scene, String email) {

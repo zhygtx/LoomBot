@@ -25,6 +25,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 import tools.jackson.databind.ObjectMapper;
 
@@ -75,7 +78,12 @@ public class WsConnectionService {
     // ==================================================================
 
     public PageResult<ConnectionResponse> page(
-            long pageNum, long pageSize, String keyword, String connectionType, Integer enabled) {
+            long pageNum,
+            long pageSize,
+            String keyword,
+            String connectionType,
+            Integer enabled,
+            long ownerUserId) {
         Page<WsConnection> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<WsConnection> wrapper =
                 new LambdaQueryWrapper<WsConnection>()
@@ -85,6 +93,7 @@ public class WsConnectionService {
                                 WsConnection::getConnectionType,
                                 connectionType)
                         .eq(enabled != null, WsConnection::getEnabled, enabled)
+                        .eq(WsConnection::getOwnerUserId, ownerUserId)
                         .orderByDesc(WsConnection::getId);
         IPage<WsConnection> result = mapper.selectPage(page, wrapper);
         List<ConnectionResponse> records =
@@ -92,25 +101,36 @@ public class WsConnectionService {
         return PageResult.of(records, result.getTotal(), pageNum, pageSize);
     }
 
-    public ConnectionResponse get(long id) {
-        return toResponse(require(id));
+    public ConnectionResponse get(long id, long ownerUserId) {
+        return toResponse(requireOwned(id, ownerUserId));
     }
 
-    public ConnectionStatus status(long id) {
-        require(id);
+    public ConnectionStatus status(long id, long ownerUserId) {
+        requireOwned(id, ownerUserId);
         return manager.status(id);
     }
 
     /** 所有已知连接的运行时状态。只在内存里，未启动过的连接不会出现。 */
-    public List<ConnectionStatus> statuses() {
-        return manager.statuses();
+    public List<ConnectionStatus> statuses(long ownerUserId) {
+        return mapper
+                .selectList(
+                        new LambdaQueryWrapper<WsConnection>()
+                                .select(WsConnection::getId)
+                                .eq(WsConnection::getOwnerUserId, ownerUserId))
+                .stream()
+                .map(connection -> manager.status(connection.getId()))
+                .toList();
     }
 
     // ==================================================================
     // 写入
     // ==================================================================
 
+    @Transactional
     public ConnectionResponse create(ConnectionCreateRequest request, Long operatorId) {
+        if (operatorId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
         ConnectionTypeDescriptor descriptor =
                 manager.connectionType(request.connectionType())
                         .orElseThrow(
@@ -120,7 +140,7 @@ public class WsConnectionService {
                                                 "适配器未就绪，无法创建类型为 "
                                                         + request.connectionType()
                                                         + " 的连接。请确认对应插件已加载。"));
-        String config = ConfigMasking.requireJsonObject(request.config());
+        String config = ConfigMasking.requireValidConfig(request.config(), descriptor);
 
         WsConnection entity = new WsConnection();
         entity.setName(request.name().trim());
@@ -144,25 +164,26 @@ public class WsConnectionService {
                     ErrorCode.CONNECTION_NAME_EXISTS, "连接名已存在: " + entity.getName());
         }
         log.info(
-                "连接已创建: id={}, name={}, type={}, endpointPath={}",
+                "连接已创建: id={}, name={}, type={}",
                 entity.getId(),
                 entity.getName(),
-                entity.getConnectionType(),
-                entity.getEndpointPath());
+                entity.getConnectionType());
 
         // 创建即启用：新连接默认 enabled=1，所以要立刻把它拉起来
-        manager.start(entity.getId());
+        afterCommit(() -> manager.start(entity.getId()));
         return toResponse(require(entity.getId()));
     }
 
+    @Transactional
     public ConnectionResponse update(long id, ConnectionUpdateRequest request, Long operatorId) {
-        WsConnection existing = require(id);
+        WsConnection existing = requireOwned(id, operatorId);
         Set<String> secretFields = ConfigMasking.secretFields(descriptorOf(existing));
 
         // restore 内部会做「必须是对象」的校验，并把哨兵还原成库中原值
         String config =
                 ConfigMasking.restore(
                         request.config(), existing.getConfig(), secretFields, objectMapper);
+        ConfigMasking.requireValidConfig(objectMapper.readTree(config), descriptorOf(existing));
 
         WsConnection patch = new WsConnection();
         patch.setId(id);
@@ -182,13 +203,14 @@ public class WsConnectionService {
 
         // 只有启用中的连接才需要刷新运行时；停用的连接等下次启用时自然读到新配置
         if (Objects.equals(existing.getEnabled(), 1)) {
-            manager.reload(id);
+            afterCommit(() -> manager.reload(id));
         }
         return toResponse(require(id));
     }
 
+    @Transactional
     public ConnectionResponse setEnabled(long id, boolean enabled, Long operatorId) {
-        require(id);
+        requireOwned(id, operatorId);
         WsConnection patch = new WsConnection();
         patch.setId(id);
         patch.setEnabled(enabled ? 1 : 0);
@@ -196,21 +218,24 @@ public class WsConnectionService {
         patch.setUpdateTime(LocalDateTime.now());
         mapper.updateById(patch);
 
-        if (enabled) {
-            manager.start(id);
-        } else {
-            manager.stop(id);
-        }
+        afterCommit(
+                () -> {
+                    if (enabled) {
+                        manager.start(id);
+                    } else {
+                        manager.stop(id);
+                    }
+                });
         return toResponse(require(id));
     }
 
-    public void delete(long id) {
-        require(id);
-        // 顺序很重要：先摘掉运行时（取消重连、关通道、注销端点），再删库。
-        // 反过来的话，删除后的一个重连定时任务会去 selectById 拿到 null，
-        // 虽然不会崩，但会留下一条含义不明的 WARN。
-        manager.forget(id);
+    @Transactional
+    public void delete(long id, Long operatorId) {
+        requireOwned(id, operatorId);
+        // 先提交逻辑删除，再清理运行时。事务回滚时连接仍保持在线，避免数据库里还存在、
+        // 运行时却已被永久摘掉的不一致状态。
         mapper.deleteById(id);
+        afterCommit(() -> manager.forget(id));
         log.info("连接已删除: id={}", id);
     }
 
@@ -224,6 +249,31 @@ public class WsConnectionService {
             throw new BusinessException(ErrorCode.CONNECTION_NOT_FOUND, "连接不存在: " + id);
         }
         return entity;
+    }
+
+    private WsConnection requireOwned(long id, Long ownerUserId) {
+        if (ownerUserId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+        WsConnection entity =
+                mapper.selectOne(
+                        new LambdaQueryWrapper<WsConnection>()
+                                .eq(WsConnection::getId, id)
+                                .eq(WsConnection::getOwnerUserId, ownerUserId));
+        if (entity == null) {
+            throw new BusinessException(ErrorCode.CONNECTION_NOT_FOUND, "连接不存在: " + id);
+        }
+        return entity;
+    }
+
+    private static void afterCommit(Runnable action) {
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        action.run();
+                    }
+                });
     }
 
     /** 类型的描述信息；适配器不在线时返回 {@code null}（掩码与就绪提示都据此退化）。 */
@@ -261,8 +311,12 @@ public class WsConnectionService {
                 entity.getId(),
                 entity.getName(),
                 entity.getConnectionType(),
-                ConfigMasking.mask(
-                        entity.getConfig(), ConfigMasking.secretFields(descriptor), objectMapper),
+                descriptor == null
+                        ? null
+                        : ConfigMasking.mask(
+                                entity.getConfig(),
+                                ConfigMasking.secretFields(descriptor),
+                                objectMapper),
                 entity.getEndpointPath(),
                 entity.getOwnerUserId(),
                 Objects.equals(entity.getEnabled(), 1),

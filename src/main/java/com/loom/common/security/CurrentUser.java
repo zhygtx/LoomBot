@@ -1,5 +1,7 @@
 package com.loom.common.security;
 
+import com.loom.common.api.ErrorCode;
+import com.loom.common.exception.BusinessException;
 import java.util.Optional;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -41,6 +43,11 @@ public final class CurrentUser {
     /** 当前调用者的用户 ID；未认证时为 {@link Optional#empty()}。 */
     public static Optional<Long> id() {
         return current().map(AuthUser::id);
+    }
+
+    /** 当前调用者的用户 ID；未认证时按业务未登录处理。 */
+    public static long requireId() {
+        return id().orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
     }
 
     /**

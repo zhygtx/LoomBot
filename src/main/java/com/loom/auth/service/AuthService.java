@@ -9,10 +9,14 @@ import com.loom.auth.dto.ResetPasswordRequest;
 import com.loom.auth.dto.UserProfileResponse;
 import com.loom.common.api.ErrorCode;
 import com.loom.common.exception.BusinessException;
+import com.loom.system.service.SystemConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 认证流程的编排。
@@ -33,16 +37,19 @@ public class AuthService {
     private final EmailCodeService emailCodeService;
     private final TokenService tokenService;
     private final PasswordEncoder passwordEncoder;
+    private final SystemConfigService systemConfigService;
 
     public AuthService(
             UserService userService,
             EmailCodeService emailCodeService,
             TokenService tokenService,
-            PasswordEncoder passwordEncoder) {
+            PasswordEncoder passwordEncoder,
+            SystemConfigService systemConfigService) {
         this.userService = userService;
         this.emailCodeService = emailCodeService;
         this.tokenService = tokenService;
         this.passwordEncoder = passwordEncoder;
+        this.systemConfigService = systemConfigService;
     }
 
     /**
@@ -52,7 +59,10 @@ public class AuthService {
      *
      * @return 新用户 ID
      */
+    @Transactional
     public Long register(RegisterRequest request) {
+        systemConfigService.requireEnabled(
+                SystemConfigService.AUTH_REGISTER_ENABLED, ErrorCode.REGISTRATION_DISABLED);
         emailCodeService.verify(EmailCodeScene.REGISTER, request.email(), request.code());
         SysUser user = userService.register(request.account(), request.email(), request.password());
         return user.getId();
@@ -71,6 +81,8 @@ public class AuthService {
      * </ol>
      */
     public LoginResponse login(LoginRequest request, String clientIp) {
+        systemConfigService.requireEnabled(
+                SystemConfigService.AUTH_LOGIN_ENABLED, ErrorCode.LOGIN_DISABLED);
         SysUser user =
                 userService
                         .findByEmail(request.email())
@@ -101,7 +113,10 @@ public class AuthService {
      *
      * <p>改完密码**吊销该用户全部令牌**。用户来重置密码，动机很可能是「怀疑密码泄漏了」， 此时把旧会话留着，等于把最需要赶走的人留在屋里。
      */
+    @Transactional
     public void resetPassword(ResetPasswordRequest request) {
+        systemConfigService.requireEnabled(
+                SystemConfigService.AUTH_PASSWORD_RESET_ENABLED, ErrorCode.PASSWORD_RESET_DISABLED);
         SysUser user =
                 userService
                         .findByEmail(request.email())
@@ -109,7 +124,13 @@ public class AuthService {
 
         emailCodeService.verify(EmailCodeScene.RESET_PASSWORD, request.email(), request.code());
         userService.updatePassword(user.getId(), request.newPassword());
-        tokenService.revokeAll(user.getId());
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        tokenService.revokeAll(user.getId());
+                    }
+                });
     }
 
     /** 登出：吊销当前令牌。幂等，令牌已失效时不报错。 */

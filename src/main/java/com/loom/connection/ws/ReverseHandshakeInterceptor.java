@@ -57,12 +57,12 @@ public class ReverseHandshakeInterceptor implements HandshakeInterceptor {
         ConnectionManager.ReverseHandshakeResult result =
                 manager.validateReverseHandshake(path, handshakeRequest);
         if (!result.accepted()) {
-            log.warn("反向握手被拒: path={}, 原因={}", path, result.rejectReason());
+            log.warn("反向握手被拒，原因={}", result.rejectReason());
             response.setStatusCode(HttpStatus.UNAUTHORIZED);
             return false;
         }
         attributes.put(ATTR_CONNECTION_ID, result.connectionId());
-        log.info("反向握手通过: path={}, connectionId={}", path, result.connectionId());
+        log.info("反向握手通过: connectionId={}", result.connectionId());
         return true;
     }
 
@@ -73,7 +73,7 @@ public class ReverseHandshakeInterceptor implements HandshakeInterceptor {
             WebSocketHandler wsHandler,
             Exception exception) {
         if (exception != null) {
-            log.warn("握手后异常: path={}, {}", request.getURI().getPath(), exception.getMessage());
+            log.warn("反向握手后异常: {}", exception.getMessage());
         }
     }
 

@@ -10,6 +10,7 @@ import com.loom.common.exception.BusinessException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -50,7 +51,7 @@ public class UserService {
     private static final Logger log = LoggerFactory.getLogger(UserService.class);
 
     /**
-     * 授权缓存键，与 docs/auth.md 约定的 {@code perm:user:{id}} 一致。
+     * 授权缓存键。版本前缀用于角色模型发生不兼容变化时整体废弃旧缓存。
      *
      * <h2>为什么用单个字符串键存集合，而不是 Redis Set</h2>
      *
@@ -60,9 +61,9 @@ public class UserService {
      * <p>字符串键则天然区分：{@code GET} 返回 {@code null} = 未缓存，返回 {@code ""} = 缓存了空集合。 权限串的字符集是 {@code
      * 域:资源:操作} 加通配 {@code *}，不含逗号，可以安全地用逗号连接。
      */
-    private static final String KEY_PERMISSIONS = "perm:user:";
+    private static final String KEY_PERMISSIONS = "perm:v2:user:";
 
-    private static final String KEY_ROLES = "role:user:";
+    private static final String KEY_ROLES = "role:v2:user:";
 
     private static final String CACHE_SEPARATOR = ",";
 
@@ -96,6 +97,7 @@ public class UserService {
      */
     @Transactional
     public SysUser register(String account, String email, String rawPassword) {
+        email = normalizeEmail(email);
         if (existsByAccount(account)) {
             throw new BusinessException(ErrorCode.ACCOUNT_EXISTS);
         }
@@ -135,7 +137,7 @@ public class UserService {
     }
 
     /**
-     * 绑定 {@code USER} 角色。
+     * 绑定当前阶段的默认角色。测试阶段为 {@code OWNER}，项目定型后再通过配置收紧。
      *
      * <p>取不到角色时**必须报错**，不能默默跳过：那样用户能登录、却没有任何角色， 表现为「功能全是 403」，而根因（种子数据缺失）在日志里一个字都没有。
      */
@@ -154,7 +156,9 @@ public class UserService {
 
     public Optional<SysUser> findByEmail(String email) {
         return Optional.ofNullable(
-                mapper.selectOne(Wrappers.<SysUser>lambdaQuery().eq(SysUser::getEmail, email)));
+                mapper.selectOne(
+                        Wrappers.<SysUser>lambdaQuery()
+                                .eq(SysUser::getEmail, normalizeEmail(email))));
     }
 
     public Optional<SysUser> findById(Long id) {
@@ -166,7 +170,8 @@ public class UserService {
     }
 
     public boolean existsByEmail(String email) {
-        return mapper.exists(Wrappers.<SysUser>lambdaQuery().eq(SysUser::getEmail, email));
+        return mapper.exists(
+                Wrappers.<SysUser>lambdaQuery().eq(SysUser::getEmail, normalizeEmail(email)));
     }
 
     // ==================================================================
@@ -179,7 +184,9 @@ public class UserService {
         SysUser update = new SysUser();
         update.setId(userId);
         update.setPassword(passwordEncoder.encode(rawPassword));
-        mapper.updateById(update);
+        if (mapper.updateById(update) != 1) {
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+        }
         log.info("用户密码已重置: id={}", userId);
     }
 
@@ -225,8 +232,7 @@ public class UserService {
      *
      * <p>这是 docs/auth.md 里「主动失效」那一项的落点：改角色 / 改权限之后必须调用它， 否则权限变更要等到 TTL 到期才生效。
      *
-     * <p><b>当前没有任何调用方</b> —— 角色与权限的管理界面还没做。保留它是因为 「一个没有失效接口的缓存」就是下一个坑：写管理界面的人看不到缓存的存在，
-     * 于是现象是「授权改了，为什么还能访问」。
+     * <p>后端权限启停接口已经调用本方法；后续角色绑定管理也必须复用它。否则授权变更要等缓存 TTL 到期， 表现会变成「管理端明明改了权限，为什么用户仍然能访问」。
      */
     public void evictAuthorizationCache(Long userId) {
         redis.delete(List.of(KEY_PERMISSIONS + userId, KEY_ROLES + userId));
@@ -259,5 +265,9 @@ public class UserService {
                 permissionStrings(user.getId()),
                 user.getLastLoginTime(),
                 user.getCreateTime());
+    }
+
+    public static String normalizeEmail(String email) {
+        return email == null ? null : email.strip().toLowerCase(Locale.ROOT);
     }
 }

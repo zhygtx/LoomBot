@@ -19,11 +19,16 @@ import com.loom.runtime.process.PythonProcessSpec;
 import com.loom.runtime.process.PythonProcessStartException;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -96,6 +101,7 @@ public class ConnectionManager implements AdapterEvents {
     private final Map<String, ConnectionHandle> handles = new ConcurrentHashMap<>();
     private final AtomicLong handleSeq = new AtomicLong();
     private final ScheduledExecutorService scheduler;
+    private final ExecutorService forwardConnectors;
 
     private volatile boolean shuttingDown;
 
@@ -119,6 +125,7 @@ public class ConnectionManager implements AdapterEvents {
                     return thread;
                 };
         this.scheduler = Executors.newScheduledThreadPool(2, factory);
+        this.forwardConnectors = Executors.newVirtualThreadPerTaskExecutor();
     }
 
     // ==================================================================
@@ -142,6 +149,7 @@ public class ConnectionManager implements AdapterEvents {
         shuttingDown = true;
         log.info("正在关闭连接管理器…");
         scheduler.shutdownNow();
+        forwardConnectors.shutdownNow();
         runtimes.values().forEach(this::teardown);
         adaptersByName.values().forEach(AdapterSession::close);
         handles.values().forEach(handle -> handle.close(CloseStatus.GOING_AWAY));
@@ -180,8 +188,9 @@ public class ConnectionManager implements AdapterEvents {
     private void onAdapterProcessExit(String name, int exitCode) {
         AdapterSession session = adaptersByName.remove(name);
         if (session != null) {
-            adaptersByType.remove(session.connectionType(), session);
-            degradeConnectionsOf(session, "适配器进程退出（exitCode=" + exitCode + "）");
+            if (adaptersByType.remove(session.connectionType(), session)) {
+                degradeConnectionsOf(session, "适配器进程退出（exitCode=" + exitCode + "）");
+            }
         }
         if (shuttingDown) {
             return;
@@ -211,11 +220,22 @@ public class ConnectionManager implements AdapterEvents {
     }
 
     private static String adapterName(String scriptPath) {
-        String normalized = scriptPath.replace('\\', '/');
-        int slash = normalized.lastIndexOf('/');
-        String file = slash < 0 ? normalized : normalized.substring(slash + 1);
+        String normalized = Path.of(scriptPath).toAbsolutePath().normalize().toString();
+        String portable = normalized.replace('\\', '/');
+        int slash = portable.lastIndexOf('/');
+        String file = slash < 0 ? portable : portable.substring(slash + 1);
         String base = file.endsWith(".py") ? file.substring(0, file.length() - 3) : file;
-        return "adapter-" + base;
+        try {
+            String digest =
+                    java.util.HexFormat.of()
+                            .formatHex(
+                                    MessageDigest.getInstance("SHA-256")
+                                            .digest(normalized.getBytes(StandardCharsets.UTF_8)))
+                            .substring(0, 10);
+            return "adapter-" + base + "-" + digest;
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("运行环境不支持 SHA-256", e);
+        }
     }
 
     private static long backoff(int attempt, long initial, long max) {
@@ -232,7 +252,27 @@ public class ConnectionManager implements AdapterEvents {
     @Override
     public void onHello(AdapterSession session) {
         adapterRestarts.remove(session.name());
-        adaptersByType.put(session.connectionType(), session);
+        AdapterSession existing = adaptersByType.putIfAbsent(session.connectionType(), session);
+        if (existing != null && existing != session) {
+            if (existing.isAlive()) {
+                log.error(
+                        "[{}] connectionType={} 已被适配器 {} 占用，拒绝重复注册",
+                        session.name(),
+                        session.connectionType(),
+                        existing.name());
+                adaptersByName.remove(session.name(), session);
+                adapterScripts.remove(session.name());
+                session.close();
+                return;
+            }
+            if (!adaptersByType.replace(session.connectionType(), existing, session)) {
+                log.error("[{}] 适配器注册发生并发冲突，已拒绝", session.name());
+                adaptersByName.remove(session.name(), session);
+                adapterScripts.remove(session.name());
+                session.close();
+                return;
+            }
+        }
         log.info("[{}] 适配器注册成功: connectionType={}", session.name(), session.connectionType());
         startEnabledConnectionsOfType(session);
     }
@@ -250,11 +290,24 @@ public class ConnectionManager implements AdapterEvents {
     }
 
     @Override
-    public String openForward(
+    public CompletionStage<String> openForward(
+            AdapterSession session, long connectionId, String url, Map<String, String> headers) {
+        return CompletableFuture.supplyAsync(
+                () -> openForwardBlocking(session, connectionId, url, headers), forwardConnectors);
+    }
+
+    private String openForwardBlocking(
             AdapterSession session, long connectionId, String url, Map<String, String> headers) {
         ConnectionRuntime runtime = runtimes.get(connectionId);
         if (runtime == null) {
             log.warn("[{}] ws.open 指向未知连接 {}", session.name(), connectionId);
+            return null;
+        }
+        AdapterSession currentAdapter = adaptersByType.get(runtime.connectionType);
+        if (currentAdapter != session
+                || !runtime.connectionType.equals(session.connectionType())
+                || session.direction() != Direction.FORWARD) {
+            log.warn("[{}] ws.open 与连接 {} 的当前适配器或方向不匹配", session.name(), connectionId);
             return null;
         }
         if (url == null || url.isBlank()) {
@@ -273,16 +326,14 @@ public class ConnectionManager implements AdapterEvents {
 
             String handleId = "h-" + connectionId + "-" + handleSeq.incrementAndGet();
             ConnectionHandle handle = new ConnectionHandle(handleId, connectionId, wsSession);
-            handler.attach(handle);
-            // 注意 try 的作用域边界：从这里到 return 之间**不允许**出现会抛异常的逻辑。
-            // 两个 catch 都不清理 handles —— 那样是安全的，因为此刻唯一的抛点在
-            // .get(timeout)，而那发生在 handles.put 之前；且残留句柄会被下一次
-            // replaceHandle（或 closeCurrentHandle）回收。若将来要在 online() 之后插入
-            // 可能抛异常的逻辑，必须把 try 收窄到只包住上面的网络握手。
             handles.put(handleId, handle);
             replaceHandle(runtime, handle);
             runtime.online();
-            log.info("[{}] 正向连接已建立: {}", runtime.name, url);
+            if (!handler.attach(handle)) {
+                onHandleClosed(handle, "握手完成前通道已关闭");
+                return null;
+            }
+            log.info("[{}] 正向连接已建立", runtime.name);
             return handleId;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -468,7 +519,7 @@ public class ConnectionManager implements AdapterEvents {
     public ReverseHandshakeResult validateReverseHandshake(String path, HandshakeRequest request) {
         Long connectionId = endpoints.connectionIdOf(path);
         if (connectionId == null) {
-            return ReverseHandshakeResult.reject("路径未注册: " + path);
+            return ReverseHandshakeResult.reject("路径未注册");
         }
         ConnectionRuntime runtime = runtimes.get(connectionId);
         if (runtime == null || !runtime.enabled) {
@@ -522,8 +573,19 @@ public class ConnectionManager implements AdapterEvents {
 
     /** 通道上收到一帧 —— 转给该连接对应的适配器。 */
     public void onFrame(ConnectionHandle handle, String payload) {
+        onFrame(handle, "text", payload);
+    }
+
+    public void onBinaryFrame(ConnectionHandle handle, byte[] payload) {
+        onFrame(handle, "base64", java.util.Base64.getEncoder().encodeToString(payload));
+    }
+
+    private void onFrame(ConnectionHandle handle, String encoding, String payload) {
         ConnectionRuntime runtime = runtimes.get(handle.connectionId());
-        if (runtime == null) {
+        if (runtime == null
+                || runtime.handle != handle
+                || handle.isSuperseded()
+                || !handle.isOpen()) {
             return;
         }
         // 静默检测的数据源（D55）。这里**无法区分心跳帧与业务帧** ——
@@ -540,7 +602,7 @@ public class ConnectionManager implements AdapterEvents {
                 holder -> {
                     holder.put("handleId", handle.handleId());
                     ObjectNode data = holder.putObject("data");
-                    data.put("encoding", "text");
+                    data.put("encoding", encoding);
                     data.put("content", payload);
                 });
     }
@@ -573,6 +635,7 @@ public class ConnectionManager implements AdapterEvents {
             return;
         }
         runtime.reconnecting("连接断开: " + reason);
+        runtime.adapterNotified = false;
         scheduleReconnect(runtime);
     }
 
@@ -619,7 +682,7 @@ public class ConnectionManager implements AdapterEvents {
             if (runtime.handle == null) {
                 runtime.state = ConnectionState.LISTENING;
                 runtime.failureReason = null;
-                log.info("[{}] 反向端点已就绪，等待平台连入: {}", runtime.name, runtime.endpointPath);
+                log.info("[{}] 反向端点已就绪，等待平台连入", runtime.name);
             } else {
                 log.debug("[{}] 平台已在退避期间连入，保持 ONLINE 不降级", runtime.name);
             }
@@ -706,6 +769,9 @@ public class ConnectionManager implements AdapterEvents {
     }
 
     private void startEnabledConnectionsOfType(AdapterSession session) {
+        runtimes.values().stream()
+                .filter(runtime -> runtime.connectionType.equals(session.connectionType()))
+                .forEach(runtime -> runtime.adapterNotified = false);
         List<WsConnection> connections =
                 mapper.selectList(
                         new LambdaQueryWrapper<WsConnection>()

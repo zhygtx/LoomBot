@@ -94,6 +94,54 @@ public final class ConfigMasking {
         return config.toString();
     }
 
+    public static String requireValidConfig(JsonNode config, ConnectionTypeDescriptor descriptor) {
+        String normalized = requireJsonObject(config);
+        JsonNode schema = descriptor == null ? null : descriptor.configSchema();
+        if (schema == null || !schema.isObject()) {
+            return normalized;
+        }
+        JsonNode properties = schema.get("properties");
+        JsonNode required = schema.get("required");
+        if (required != null && required.isArray()) {
+            for (JsonNode field : required) {
+                String name = field.asString();
+                JsonNode value = config.get(name);
+                if (value == null
+                        || value.isNull()
+                        || (value.isString() && value.asString().isBlank())) {
+                    throw new BusinessException(
+                            ErrorCode.CONNECTION_CONFIG_INVALID, "连接参数缺少必填字段: " + name);
+                }
+            }
+        }
+        if (properties != null && properties.isObject()) {
+            for (String name : properties.propertyNames()) {
+                JsonNode value = config.get(name);
+                JsonNode definition = properties.get(name);
+                if (value == null || value.isNull() || definition == null) {
+                    continue;
+                }
+                String expected = definition.path("type").asString();
+                boolean valid =
+                        switch (expected) {
+                            case "string" -> value.isString();
+                            case "boolean" -> value.isBoolean();
+                            case "integer" -> value.isIntegralNumber();
+                            case "number" -> value.isNumber();
+                            case "object" -> value.isObject();
+                            case "array" -> value.isArray();
+                            default -> true;
+                        };
+                if (!valid) {
+                    throw new BusinessException(
+                            ErrorCode.CONNECTION_CONFIG_INVALID,
+                            "连接参数字段 " + name + " 的类型应为 " + expected);
+                }
+            }
+        }
+        return normalized;
+    }
+
     /**
      * 把密钥字段替换成哨兵，返回打过掩码的对象。
      *

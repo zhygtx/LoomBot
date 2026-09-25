@@ -64,6 +64,7 @@ public record AuthProperties(
         requirePositive(tokenTtl, "loom.auth.token-ttl");
         requirePositive(emailCodeTtl, "loom.auth.email-code-ttl");
         requirePositive(emailCodeCooldown, "loom.auth.email-code-cooldown");
+        requirePositive(permissionCacheTtl, "loom.auth.permission-cache-ttl");
         if (emailCodeMaxAttempts < 1) {
             throw new IllegalStateException(
                     "loom.auth.email-code-max-attempts 必须大于 0：0 会让验证码永远无法通过。");

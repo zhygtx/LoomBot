@@ -3,8 +3,8 @@ package com.loom.connection.ws;
 import com.loom.connection.manager.ConnectionHandle;
 import com.loom.connection.manager.ConnectionManager;
 import java.io.EOFException;
+import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
-import java.nio.charset.StandardCharsets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -37,20 +37,24 @@ public class ReverseWebSocketHandler extends AbstractWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
-        Long connectionId =
-                (Long) session.getAttributes().get(ReverseHandshakeInterceptor.ATTR_CONNECTION_ID);
-        if (connectionId == null) {
-            // 走到这里说明拦截器被绕过或注册顺序被改坏了，属于编程错误
-            log.error("反向会话缺少 connectionId 属性，关闭: {}", session.getId());
-            closeQuietly(session);
-            return;
+        synchronized (session) {
+            Long connectionId =
+                    (Long)
+                            session.getAttributes()
+                                    .get(ReverseHandshakeInterceptor.ATTR_CONNECTION_ID);
+            if (connectionId == null) {
+                // 走到这里说明拦截器被绕过或注册顺序被改坏了，属于编程错误
+                log.error("反向会话缺少 connectionId 属性，关闭: {}", session.getId());
+                closeQuietly(session);
+                return;
+            }
+            ConnectionHandle handle = manager.onReverseSessionOpened(connectionId, session);
+            if (handle == null) {
+                closeQuietly(session);
+                return;
+            }
+            session.getAttributes().put(ATTR_HANDLE, handle);
         }
-        ConnectionHandle handle = manager.onReverseSessionOpened(connectionId, session);
-        if (handle == null) {
-            closeQuietly(session);
-            return;
-        }
-        session.getAttributes().put(ATTR_HANDLE, handle);
     }
 
     @Override
@@ -60,7 +64,14 @@ public class ReverseWebSocketHandler extends AbstractWebSocketHandler {
 
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) {
-        forward(session, new String(message.getPayload().array(), StandardCharsets.UTF_8));
+        ConnectionHandle handle = (ConnectionHandle) session.getAttributes().get(ATTR_HANDLE);
+        if (handle == null) {
+            return;
+        }
+        ByteBuffer buffer = message.getPayload().asReadOnlyBuffer();
+        byte[] bytes = new byte[buffer.remaining()];
+        buffer.get(bytes);
+        manager.onBinaryFrame(handle, bytes);
     }
 
     private void forward(WebSocketSession session, String payload) {
@@ -75,9 +86,11 @@ public class ReverseWebSocketHandler extends AbstractWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        ConnectionHandle handle = (ConnectionHandle) session.getAttributes().get(ATTR_HANDLE);
-        if (handle != null) {
-            manager.onHandleClosed(handle, "平台断开 " + status);
+        synchronized (session) {
+            ConnectionHandle handle = (ConnectionHandle) session.getAttributes().get(ATTR_HANDLE);
+            if (handle != null) {
+                manager.onHandleClosed(handle, "平台断开 " + status);
+            }
         }
     }
 

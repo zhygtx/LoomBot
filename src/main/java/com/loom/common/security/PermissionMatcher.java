@@ -1,0 +1,185 @@
+package com.loom.common.security;
+
+import com.loom.system.service.BackendPermissionCatalogService;
+import java.lang.reflect.AnnotatedElement;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+
+/**
+ * 方法级权限匹配与后端权限要求加载器。
+ *
+ * <p>接口要求固定为三段式 domain:resource:action。用户持有的权限是 glob 模式：星号表示 零个或多个任意字符，可以出现在授权模式的任意位置。例如
+ * connection:ws:*、 connection:*:read、conn* 和单独的 * 都有效。
+ */
+@Component("permission")
+public class PermissionMatcher {
+
+    private static final Logger log = LoggerFactory.getLogger(PermissionMatcher.class);
+
+    private static final String ROLE_PREFIX = "ROLE_";
+    private static final String EXPRESSION_PREFIX = "@permission.has";
+    private static final int REQUIRED_SEGMENT_COUNT = 3;
+
+    private final RequestMappingHandlerMapping handlerMapping;
+    private final BackendPermissionCatalogService catalogService;
+    private volatile Set<String> requiredPermissions = Set.of();
+
+    public PermissionMatcher(
+            @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping,
+            BackendPermissionCatalogService catalogService) {
+        this.handlerMapping = handlerMapping;
+        this.catalogService = catalogService;
+    }
+
+    /** 当前认证是否拥有所要求的具体权限。 */
+    public boolean has(Authentication authentication, String requiredPermission) {
+        if (!isConcreteRequirement(requiredPermission)
+                || authentication == null
+                || !authentication.isAuthenticated()
+                || authentication.getAuthorities() == null
+                || !catalogService.isEnabledRequirement(requiredPermission)) {
+            return false;
+        }
+
+        for (GrantedAuthority authority : authentication.getAuthorities()) {
+            if (authority == null) {
+                continue;
+            }
+            String grantedPattern = authority.getAuthority();
+            if (grantedPattern == null
+                    || grantedPattern.startsWith(ROLE_PREFIX)
+                    || !isValidGrantedPattern(grantedPattern)) {
+                continue;
+            }
+            if (globMatches(grantedPattern, requiredPermission)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 启动时扫描控制器权限要求，并补齐到权限表供管理端分配和控制。 */
+    @EventListener(ApplicationReadyEvent.class)
+    public void loadPermissionRequirements() {
+        Set<String> discovered = new LinkedHashSet<>();
+        handlerMapping
+                .getHandlerMethods()
+                .values()
+                .forEach(
+                        handler -> {
+                            collect(handler.getMethod(), discovered);
+                            collect(handler.getBeanType(), discovered);
+                        });
+        catalogService.synchronize(discovered);
+        requiredPermissions = Set.copyOf(discovered);
+        log.info("已加载并同步 {} 个后端权限要求", discovered.size());
+    }
+
+    public Set<String> requiredPermissions() {
+        return requiredPermissions;
+    }
+
+    private static void collect(AnnotatedElement element, Set<String> output) {
+        PreAuthorize annotation =
+                AnnotatedElementUtils.findMergedAnnotation(element, PreAuthorize.class);
+        if (annotation == null || !annotation.value().contains(EXPRESSION_PREFIX)) {
+            return;
+        }
+        String expression = annotation.value();
+        int firstQuote = expression.indexOf('\'');
+        int lastQuote = expression.lastIndexOf('\'');
+        if (firstQuote < 0 || lastQuote <= firstQuote) {
+            throw new IllegalStateException("无法解析权限表达式: " + expression);
+        }
+        String permission = expression.substring(firstQuote + 1, lastQuote);
+        if (!isConcreteRequirement(permission)) {
+            throw new IllegalStateException("接口声明了非法权限要求: " + permission);
+        }
+        output.add(permission);
+    }
+
+    private static boolean isConcreteRequirement(String permission) {
+        if (permission == null || permission.isBlank()) {
+            return false;
+        }
+        String[] segments = permission.split(":", -1);
+        if (segments.length != REQUIRED_SEGMENT_COUNT) {
+            return false;
+        }
+        for (String segment : segments) {
+            if (!isConcreteSegment(segment)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isConcreteSegment(String segment) {
+        if (segment == null || segment.isEmpty() || segment.indexOf('*') >= 0) {
+            return false;
+        }
+        for (int index = 0; index < segment.length(); index++) {
+            char value = segment.charAt(index);
+            if (!Character.isLetterOrDigit(value) && value != '_' && value != '-' && value != '.') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isValidGrantedPattern(String pattern) {
+        if (pattern == null || pattern.isBlank()) {
+            return false;
+        }
+        for (int index = 0; index < pattern.length(); index++) {
+            char value = pattern.charAt(index);
+            if (!Character.isLetterOrDigit(value)
+                    && value != '_'
+                    && value != '-'
+                    && value != '.'
+                    && value != ':'
+                    && value != '*') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 线性时间 glob 匹配：星号匹配任意长度、任意文本。 */
+    private static boolean globMatches(String pattern, String text) {
+        int patternIndex = 0;
+        int textIndex = 0;
+        int lastStar = -1;
+        int starTextIndex = -1;
+        while (textIndex < text.length()) {
+            if (patternIndex < pattern.length()
+                    && pattern.charAt(patternIndex) == text.charAt(textIndex)) {
+                patternIndex++;
+                textIndex++;
+            } else if (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
+                lastStar = patternIndex++;
+                starTextIndex = textIndex;
+            } else if (lastStar >= 0) {
+                patternIndex = lastStar + 1;
+                textIndex = ++starTextIndex;
+            } else {
+                return false;
+            }
+        }
+        while (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
+            patternIndex++;
+        }
+        return patternIndex == pattern.length();
+    }
+}

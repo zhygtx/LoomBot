@@ -2,6 +2,7 @@ package com.loom.connection.handshake;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import javax.crypto.Mac;
@@ -123,6 +124,20 @@ public final class BuiltinHandshakeValidators {
             String provided = request.header(spec.headerName());
             if (isBlank(provided)) {
                 return "缺少签名头 " + spec.headerName();
+            }
+            long epochSeconds;
+            try {
+                epochSeconds = Long.parseLong(timestamp.strip());
+                if (timestamp.strip().length() >= 13) {
+                    epochSeconds /= 1000;
+                }
+            } catch (NumberFormatException e) {
+                return "时间戳格式不正确";
+            }
+            long now = Instant.now().getEpochSecond();
+            if (epochSeconds < now - spec.maxClockSkewSeconds()
+                    || epochSeconds > now + spec.maxClockSkewSeconds()) {
+                return "时间戳已过期";
             }
             String expected = hmacHex(secret, timestamp + request.path());
             return constantTimeEquals(provided.strip().toLowerCase(), expected) ? null : "签名不匹配";

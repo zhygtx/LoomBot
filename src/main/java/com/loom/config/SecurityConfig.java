@@ -86,6 +86,9 @@ public class SecurityConfig {
                                         // 连通性探针
                                         .requestMatchers("/api/system/ping")
                                         .permitAll()
+                                        // 登录 / 注册页面需要在未认证时读取入口开关
+                                        .requestMatchers("/api/system/public/auth-options")
+                                        .permitAll()
                                         // 健康检查：供容器探针与监控使用，不能要求认证
                                         .requestMatchers("/actuator/health", "/actuator/health/**")
                                         .permitAll()

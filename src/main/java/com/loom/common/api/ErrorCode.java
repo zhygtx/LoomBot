@@ -38,6 +38,10 @@ public enum ErrorCode {
     EMAIL_CODE_INVALID(200004, "验证码错误或已过期"),
     EMAIL_CODE_TOO_FREQUENT(200005, "验证码发送过于频繁，请稍后再试"),
     EMAIL_CODE_ATTEMPTS_EXCEEDED(200006, "验证码错误次数过多，请重新获取"),
+    REGISTRATION_DISABLED(200007, "系统当前未开放注册"),
+    LOGIN_DISABLED(200008, "系统当前暂停登录"),
+    EMAIL_CODE_DISABLED(200009, "系统当前暂停发送验证码"),
+    PASSWORD_RESET_DISABLED(200010, "系统当前暂停找回密码"),
 
     // ---------- 3xxxxx 系统管理 ----------
     USER_NOT_FOUND(300000, "用户不存在"),
@@ -48,6 +52,8 @@ public enum ErrorCode {
     PERMISSION_NOT_FOUND(300005, "权限不存在"),
     PERMISSION_CODE_EXISTS(300006, "权限串已存在"),
     EMAIL_EXISTS(300007, "邮箱已被注册"),
+    SYSTEM_CONFIG_NOT_FOUND(300008, "系统配置不存在"),
+    SYSTEM_CONFIG_VALUE_INVALID(300009, "系统配置值不合法"),
 
     // ---------- 4xxxxx 插件 ----------
     PLUGIN_NOT_FOUND(400000, "插件不存在"),

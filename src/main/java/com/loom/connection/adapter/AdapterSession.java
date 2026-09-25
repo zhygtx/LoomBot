@@ -253,7 +253,16 @@ public final class AdapterSession implements IpcListener {
         this.displayName = message.stringField("displayName");
         this.direction = Direction.parse(message.stringField("direction"));
         this.configSchema = message.field("configSchema");
-        this.handshakeSpec = HandshakeSpec.from(configSchema);
+        if (direction == Direction.REVERSE) {
+            try {
+                this.handshakeSpec = HandshakeSpec.from(configSchema);
+            } catch (IllegalArgumentException e) {
+                log.error("[{}] hello 的握手规格非法，适配器不可用: {}", name(), e.getMessage());
+                return;
+            }
+        } else {
+            this.handshakeSpec = HandshakeSpec.NONE;
+        }
 
         JsonNode caps = message.field("capabilities");
         if (caps != null && caps.isArray()) {
@@ -306,16 +315,20 @@ public final class AdapterSession implements IpcListener {
                     .properties()
                     .forEach(entry -> headers.put(entry.getKey(), entry.getValue().asString()));
         }
-        String handleId = events.openForward(this, connectionId, url, headers);
-        if (handleId == null) {
-            replyFailure(message.id(), "建立正向连接失败: " + url);
-            return;
-        }
-        bindHandle(connectionId, handleId);
-        ObjectNode payload = codec.newPayload();
-        payload.put("ok", true);
-        payload.put("handleId", handleId);
-        channel.send(new IpcMessage(message.id(), IpcMessage.TYPE_REPLY, payload));
+        events.openForward(this, connectionId, url, headers)
+                .whenComplete(
+                        (handleId, failure) -> {
+                            if (failure != null || handleId == null) {
+                                replyFailure(message.id(), "建立正向连接失败");
+                                return;
+                            }
+                            bindHandle(connectionId, handleId);
+                            ObjectNode payload = codec.newPayload();
+                            payload.put("ok", true);
+                            payload.put("handleId", handleId);
+                            channel.send(
+                                    new IpcMessage(message.id(), IpcMessage.TYPE_REPLY, payload));
+                        });
     }
 
     private Long resolveConnectionId(IpcMessage message) {

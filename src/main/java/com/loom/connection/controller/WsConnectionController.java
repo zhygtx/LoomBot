@@ -59,7 +59,7 @@ public class WsConnectionController {
      * <p>返回类型描述本身就是读模型（不是持久化实体），所以直接返回，不再套一层 DTO —— 多一层 只会让「插件加了字段」变成「两处都要改」。
      */
     @GetMapping("/types")
-    @PreAuthorize("hasAuthority('connection:ws:list')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:list')")
     public Result<List<ConnectionTypeDescriptor>> types() {
         return Result.success(manager.connectionTypes());
     }
@@ -69,7 +69,7 @@ public class WsConnectionController {
     // ------------------------------------------------------------------
 
     @GetMapping
-    @PreAuthorize("hasAuthority('connection:ws:list')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:list')")
     public Result<PageResult<ConnectionResponse>> list(
             @RequestParam(defaultValue = "1") long pageNum,
             @RequestParam(defaultValue = "10") long pageSize,
@@ -77,32 +77,39 @@ public class WsConnectionController {
             @RequestParam(required = false) String connectionType,
             @RequestParam(required = false) Integer enabled) {
         checkPage(pageNum, pageSize);
-        return Result.success(service.page(pageNum, pageSize, keyword, connectionType, enabled));
+        return Result.success(
+                service.page(
+                        pageNum,
+                        pageSize,
+                        keyword,
+                        connectionType,
+                        enabled,
+                        CurrentUser.requireId()));
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('connection:ws:read')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:read')")
     public Result<ConnectionResponse> detail(@PathVariable long id) {
-        return Result.success(service.get(id));
+        return Result.success(service.get(id, CurrentUser.requireId()));
     }
 
     @PostMapping
-    @PreAuthorize("hasAuthority('connection:ws:create')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:create')")
     public Result<ConnectionResponse> create(@Valid @RequestBody ConnectionCreateRequest request) {
-        return Result.success(service.create(request, CurrentUser.id().orElse(null)));
+        return Result.success(service.create(request, CurrentUser.requireId()));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAuthority('connection:ws:update')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:update')")
     public Result<ConnectionResponse> update(
             @PathVariable long id, @Valid @RequestBody ConnectionUpdateRequest request) {
-        return Result.success(service.update(id, request, CurrentUser.id().orElse(null)));
+        return Result.success(service.update(id, request, CurrentUser.requireId()));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAuthority('connection:ws:delete')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:delete')")
     public Result<Void> delete(@PathVariable long id) {
-        service.delete(id);
+        service.delete(id, CurrentUser.requireId());
         return Result.success();
     }
 
@@ -111,27 +118,27 @@ public class WsConnectionController {
     // ------------------------------------------------------------------
 
     @GetMapping("/{id}/status")
-    @PreAuthorize("hasAuthority('connection:ws:read')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:read')")
     public Result<ConnectionStatus> status(@PathVariable long id) {
-        return Result.success(service.status(id));
+        return Result.success(service.status(id, CurrentUser.requireId()));
     }
 
     @GetMapping("/statuses")
-    @PreAuthorize("hasAuthority('connection:ws:list')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:list')")
     public Result<List<ConnectionStatus>> statuses() {
-        return Result.success(service.statuses());
+        return Result.success(service.statuses(CurrentUser.requireId()));
     }
 
     @PostMapping("/{id}/enable")
-    @PreAuthorize("hasAuthority('connection:ws:operate')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:operate')")
     public Result<ConnectionResponse> enable(@PathVariable long id) {
-        return Result.success(service.setEnabled(id, true, CurrentUser.id().orElse(null)));
+        return Result.success(service.setEnabled(id, true, CurrentUser.requireId()));
     }
 
     @PostMapping("/{id}/disable")
-    @PreAuthorize("hasAuthority('connection:ws:operate')")
+    @PreAuthorize("@permission.has(authentication, 'connection:ws:operate')")
     public Result<ConnectionResponse> disable(@PathVariable long id) {
-        return Result.success(service.setEnabled(id, false, CurrentUser.id().orElse(null)));
+        return Result.success(service.setEnabled(id, false, CurrentUser.requireId()));
     }
 
     /**

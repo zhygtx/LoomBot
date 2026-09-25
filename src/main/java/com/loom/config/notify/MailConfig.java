@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.mail.javamail.JavaMailSender;
 
 /**
- * 装配 {@link MailSender}：配了 SMTP 就真发，没配就降级为打日志。
+ * 装配 {@link MailSender}：配了 SMTP 就真发；没配时默认拒绝启动，仅允许本机显式开启日志邮件。
  *
  * <h2>为什么用 {@code ObjectProvider} 探测，而不是 {@code @ConditionalOnProperty}</h2>
  *
@@ -21,6 +21,8 @@ import org.springframework.mail.javamail.JavaMailSender;
  * <p>Spring Boot 自己的邮件自动配置用的是 {@code containsProperty}，同样只看存在性。 所以这里换成探测 <b>bean 是否真的被创建了</b>：Boot
  * 只在 {@code spring.mail.host} 或 {@code spring.mail.jndi-name} 有值时才会注册 {@code JavaMailSender}。
  * 判断依据与结果同源，不存在「条件说是、实际没有」的空档。
+ *
+ * <p>日志邮件必须通过 {@code loom.notify.allow-logging-mail=true} 显式开启，避免生产环境漏配 SMTP 时泄漏验证码。
  *
  * <p>（{@code getIfAvailable()} 在这里是安全的：所有 bean 定义先注册、后实例化， 自动配置的 {@code JavaMailSender}
  * 定义在本次实例化之前就已经在了。）
@@ -35,10 +37,16 @@ public class MailConfig {
             ObjectProvider<JavaMailSender> javaMailSenderProvider,
             NotifyLogWriter notifyLogWriter,
             @Value("${spring.mail.from:}") String from,
-            @Value("${spring.mail.username:}") String username) {
+            @Value("${spring.mail.username:}") String username,
+            @Value("${loom.notify.allow-logging-mail:false}") boolean allowLoggingMail) {
 
         JavaMailSender javaMailSender = javaMailSenderProvider.getIfAvailable();
         if (javaMailSender == null) {
+            if (!allowLoggingMail) {
+                throw new IllegalStateException(
+                        "未配置 SMTP，且未显式允许日志邮件。生产环境必须配置 spring.mail.host；"
+                                + "本机开发可设置 ALLOW_LOGGING_MAIL=true。");
+            }
             log.warn(
                     "未配置 spring.mail.host —— 邮件不会真正发出，验证码只会写进日志与 notify_log。"
                             + "这只适用于本机开发，生产环境必须配置 SMTP。");

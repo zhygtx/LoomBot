@@ -36,8 +36,8 @@ public class SysUser {
     /** {@code status} 的正常值。0 = 停用，登录时被拒。 */
     public static final int STATUS_ENABLED = 1;
 
-    /** 注册时绑定的默认角色标识，对应 V1 种子数据里的 {@code USER} 行。 */
-    public static final String DEFAULT_ROLE_CODE = "USER";
+    /** 当前测试阶段注册用户默认绑定站长角色，便于验证全部管理端与用户端能力。 */
+    public static final String DEFAULT_ROLE_CODE = "OWNER";
 
     @TableId private Long id;
 

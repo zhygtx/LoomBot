@@ -20,16 +20,9 @@
 --      权限点和菜单是同一张表、同一套权限串。type=MENU 的行既决定前端菜单与路由，
 --      其 perm 字段又同时是后端接口权限。这样「能看见」与「能调用」天然一致。
 --
---  权限串约定：域:资源:操作，固定三段，例如 plugin:manage:add
---      支持分段通配：*:*:* 为超级权限，plugin:*:* 覆盖插件模块全部操作。
---      匹配逻辑（后端 PermissionEvaluator 实现）：
---          static boolean match(String granted, String required) {
---              String[] g = granted.split(":"), r = required.split(":");
---              if (g.length != r.length) return false;
---              for (int i = 0; i < g.length; i++)
---                  if (!"*".equals(g[i]) && !g[i].equals(r[i])) return false;
---              return true;
---          }
+--  接口权限要求采用域:资源:操作三段式，例如 plugin:manage:add。
+--  授予角色的权限使用 glob 语义：* 表示零个或多个任意字符，可出现在任意位置。
+--  例如 * 匹配所有权限，connection:ws:* 匹配该资源全部操作，conn* 匹配以 conn 开头的要求。
 --
 --  主键约定：BIGINT 雪花 ID，对应 application.yml 中
 --           mybatis-plus.global-config.db-config.id-type=assign_id
@@ -183,9 +176,9 @@ INSERT INTO `sys_role` (`id`, `code`, `name`, `sort`, `status`, `builtin`, `rema
     (2, 'ADMIN', '管理员', 20, 1, 1, '日常运营管理'),
     (3, 'OWNER', '站长',   10, 1, 1, '最高权限，建议仅一人持有');
 
--- 超级权限点：持有 *:*:* 即放行全部鉴权
+-- 超级权限点：持有 * 即匹配全部权限要求
 INSERT INTO `sys_permission` (`id`, `parent_id`, `name`, `type`, `perm`, `sort`, `visible`, `remark`) VALUES
-    (1, 0, '超级权限', 'API', '*:*:*', 0, 0, '通配全部权限串，仅授予站长');
+    (1, 0, '超级权限', 'API', '*', 0, 0, 'glob 通配全部权限串，仅授予站长');
 
 -- 站长只绑这一条，不需要往关联表里堆全量权限。
 -- 好处：以后每新增一个权限点，站长自动拥有，无需回来补关联行。

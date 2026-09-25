@@ -10,14 +10,13 @@ import io.jsonwebtoken.security.Keys;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
-import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import javax.crypto.SecretKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 /**
@@ -57,30 +56,37 @@ public class TokenService {
     private static final String CLAIM_ACCOUNT = "account";
     private static final String CLAIM_EMAIL = "email";
 
-    /**
-     * application.yml 里那个开发默认密钥的前缀。
-     *
-     * <p>本工程刻意**不给** {@code jwt-secret} 一个像样的默认值：一个随机的默认值会把
-     * 「配置漏了」伪装成「每次重启所有人掉线」，比启动失败难查得多。开发默认值只存在于 被 .gitignore 排除的 application.yml 里，并且一旦被用上就在这里吼一声 ——
-     * 生产环境忘记设 JWT_SECRET 时，这条 WARN 是唯一的提示。
-     */
-    private static final String DEV_SECRET_PREFIX = "loom-dev-";
+    private static final DefaultRedisScript<Long> ISSUE_SCRIPT =
+            new DefaultRedisScript<>(
+                    "redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[3]); "
+                            + "redis.call('SADD', KEYS[2], ARGV[2]); "
+                            + "redis.call('PEXPIRE', KEYS[2], ARGV[3]); return 1;",
+                    Long.class);
+
+    private static final DefaultRedisScript<Long> REVOKE_ALL_SCRIPT =
+            new DefaultRedisScript<>(
+                    "local ids=redis.call('SMEMBERS', KEYS[1]); "
+                            + "for _,id in ipairs(ids) do redis.call('DEL', ARGV[1] .. id); end; "
+                            + "redis.call('DEL', KEYS[1]); return #ids;",
+                    Long.class);
+
+    private static final DefaultRedisScript<Long> REVOKE_ONE_SCRIPT =
+            new DefaultRedisScript<>(
+                    "redis.call('DEL', KEYS[1]); redis.call('SREM', KEYS[2], ARGV[1]); return 1;",
+                    Long.class);
 
     private final AuthProperties properties;
     private final StringRedisTemplate redis;
+    private final UserService userService;
     private final SecretKey signingKey;
 
-    public TokenService(AuthProperties properties, StringRedisTemplate redis) {
+    public TokenService(
+            AuthProperties properties, StringRedisTemplate redis, UserService userService) {
         this.properties = properties;
         this.redis = redis;
+        this.userService = userService;
         this.signingKey =
                 Keys.hmacShaKeyFor(properties.jwtSecret().getBytes(StandardCharsets.UTF_8));
-        if (properties.jwtSecret().startsWith(DEV_SECRET_PREFIX)) {
-            log.warn(
-                    "正在使用开发默认的 JWT 密钥（loom.auth.jwt-secret 以 {} 开头）。"
-                            + "生产环境必须通过环境变量 JWT_SECRET 覆盖它，否则任何人都能伪造令牌。",
-                    DEV_SECRET_PREFIX);
-        }
     }
 
     /** 签发结果。 */
@@ -106,11 +112,13 @@ public class TokenService {
                         .signWith(signingKey, Jwts.SIG.HS256)
                         .compact();
 
-        redis.opsForValue()
-                .set(KEY_TOKEN + jti, String.valueOf(user.getId()), properties.tokenTtl());
         String userTokensKey = KEY_USER_TOKENS + user.getId();
-        redis.opsForSet().add(userTokensKey, jti);
-        redis.expire(userTokensKey, properties.tokenTtl());
+        redis.execute(
+                ISSUE_SCRIPT,
+                java.util.List.of(KEY_TOKEN + jti, userTokensKey),
+                String.valueOf(user.getId()),
+                jti,
+                String.valueOf(properties.tokenTtl().toMillis()));
 
         return new IssuedToken(token, jti, properties.tokenTtl().toSeconds());
     }
@@ -136,11 +144,16 @@ public class TokenService {
             return Optional.empty();
         }
         try {
-            return Optional.of(
-                    new AuthUser(
-                            Long.valueOf(userId),
-                            claims.get(CLAIM_ACCOUNT, String.class),
-                            claims.get(CLAIM_EMAIL, String.class)));
+            Long id = Long.valueOf(userId);
+            if (!String.valueOf(id).equals(claims.getSubject())) {
+                return Optional.empty();
+            }
+            SysUser current = userService.findById(id).orElse(null);
+            if (current == null || !current.enabled()) {
+                redis.delete(KEY_TOKEN + jti);
+                return Optional.empty();
+            }
+            return Optional.of(new AuthUser(id, current.getAccount(), current.getEmail()));
         } catch (NumberFormatException e) {
             log.warn("白名单里的 userId 不是数字，令牌作废: jti={}", jti);
             return Optional.empty();
@@ -161,10 +174,14 @@ public class TokenService {
         if (jti == null || jti.isBlank()) {
             return;
         }
-        redis.delete(KEY_TOKEN + jti);
         String userId = claims.getSubject();
-        if (userId != null) {
-            redis.opsForSet().remove(KEY_USER_TOKENS + userId, jti);
+        if (userId == null || userId.isBlank()) {
+            redis.delete(KEY_TOKEN + jti);
+        } else {
+            redis.execute(
+                    REVOKE_ONE_SCRIPT,
+                    java.util.List.of(KEY_TOKEN + jti, KEY_USER_TOKENS + userId),
+                    jti);
         }
     }
 
@@ -176,13 +193,10 @@ public class TokenService {
      * <p>注意本方法不做「只保留当前这一个会话」的区分。改密码后要求所有端重新登录， 是刻意选的保守行为：用户改密码的动机往往就是「怀疑密码泄漏了」。
      */
     public void revokeAll(Long userId) {
-        Set<String> jtis = redis.opsForSet().members(KEY_USER_TOKENS + userId);
-        if (jtis != null && !jtis.isEmpty()) {
-            List<String> keys = jtis.stream().map(jti -> KEY_TOKEN + jti).toList();
-            redis.delete(keys);
-            log.info("已吊销用户全部令牌: userId={}, 数量={}", userId, keys.size());
-        }
-        redis.delete(KEY_USER_TOKENS + userId);
+        Long count =
+                redis.execute(
+                        REVOKE_ALL_SCRIPT, java.util.List.of(KEY_USER_TOKENS + userId), KEY_TOKEN);
+        log.info("已吊销用户全部令牌: userId={}, 数量={}", userId, count == null ? 0 : count);
     }
 
     /** 只验签与有效期，**不查白名单** —— 吊销场景需要能解析出一个已失效的令牌。 */
