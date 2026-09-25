@@ -130,6 +130,10 @@ public final class IpcChannel implements Closeable {
             boolean intentional = closing.getAndSet(true);
             if (intentional) {
                 log.debug("[{}] IPC 通道已正常关闭", name);
+            } else if (cause instanceof RuntimeException) {
+                // 能逃出 handleLine 的 RuntimeException 说明是 handleLine 保护范围之外的 bug，
+                // 只打 message 会丢掉栈，事后无法定位。这种情况必须带 throwable。
+                log.error("[{}] IPC 读取循环异常终止", name, cause);
             } else {
                 log.warn("[{}] IPC 通道断开: {}", name, cause == null ? "对端结束输出" : cause.getMessage());
             }

@@ -274,6 +274,11 @@ public class ConnectionManager implements AdapterEvents {
             String handleId = "h-" + connectionId + "-" + handleSeq.incrementAndGet();
             ConnectionHandle handle = new ConnectionHandle(handleId, connectionId, wsSession);
             handler.attach(handle);
+            // 注意 try 的作用域边界：从这里到 return 之间**不允许**出现会抛异常的逻辑。
+            // 两个 catch 都不清理 handles —— 那样是安全的，因为此刻唯一的抛点在
+            // .get(timeout)，而那发生在 handles.put 之前；且残留句柄会被下一次
+            // replaceHandle（或 closeCurrentHandle）回收。若将来要在 online() 之后插入
+            // 可能抛异常的逻辑，必须把 try 收窄到只包住上面的网络握手。
             handles.put(handleId, handle);
             replaceHandle(runtime, handle);
             runtime.online();

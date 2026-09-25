@@ -37,8 +37,18 @@
 
         <!-- 覆盖率门槛（BUNDLE 行覆盖率）。
              这是「棘轮」：定在略低于当前实际值的位置，防止覆盖率倒退。
-             当前实际约 83%，随业务代码与测试补充逐步上调。 -->
+             当前实际 0.7850（1205/1535 行），余量约 3.5 个点，随业务代码与测试补充逐步上调。
+             注意：集成测试默认被排除（见上），而最容易出问题的那几个类（IpcChannel /
+             ConnectionManager / AdapterSession）恰恰依赖外部环境，所以这里另加了一条
+             单类下限规则，避免它们被平均值掩盖。 -->
         <jacoco.line.coverage.min>0.75</jacoco.line.coverage.min>
+
+        <!-- 单类行覆盖率下限。
+             平均值会掩盖「某个类几乎没测」：只要总量达标，一个 0% 的类也能蒙混过关。
+             这里只对「有实际逻辑」的类兜底，不追求把每个类都拉到 80%。
+             阈值取 0.60 而不是 0.8，是因为部分类的低覆盖来自「异常分支难以构造」，
+             强行拉高会催生只为凑数的测试。真正危险的类用专项测试保证（见 docs/engineering.md）。 -->
+        <jacoco.class.line.coverage.min>0.60</jacoco.class.line.coverage.min>
     </properties>
 
     <dependencyManagement>
@@ -294,6 +304,9 @@
                         <exclude>**/entity/**</exclude>
                         <exclude>**/dto/**</exclude>
                         <exclude>**/*Application.class</exclude>
+                        <!-- 自定义异常只有构造器，测它等于测 super(...) 有没有被调用，
+                             纯属凑数。排除掉才能让「按类兜底」这条规则只对真正的逻辑生效。 -->
+                        <exclude>**/*Exception.class</exclude>
                     </excludes>
                 </configuration>
                 <executions>
@@ -325,6 +338,20 @@
                                             <counter>LINE</counter>
                                             <value>COVEREDRATIO</value>
                                             <minimum>${jacoco.line.coverage.min}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                                <!-- 按类兜底：防止「总量达标但某个类完全没测」。
+                                     LINE counter 的 COVEREDRATIO 在「类一行都没有」时为空，
+                                     空值对 <minimum> 不构成违规，所以纯常量类不会误伤。
+                                     这里不设 LIMITED 元素，因为那需要按类白名单，维护成本太高。 -->
+                                <rule>
+                                    <element>CLASS</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${jacoco.class.line.coverage.min}</minimum>
                                         </limit>
                                     </limits>
                                 </rule>

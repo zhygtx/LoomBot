@@ -116,6 +116,16 @@ public final class PythonProcessHost implements Closeable {
     }
 
     /**
+     * 子进程退出码。
+     *
+     * @throws IllegalThreadStateException 进程尚未退出时 —— 这是 {@link Process} 的既有约定， 刻意不吞掉：调用方必须先确认
+     *     {@link #isAlive()} 为 {@code false}，否则「拿到一个编造的退出码」比拿到异常更危险。
+     */
+    public int exitCode() {
+        return process.exitValue();
+    }
+
+    /**
      * 优雅关闭：发 {@code shutdown} → 等待 → destroy → 等待 → 强杀。
      *
      * <p>幂等，可重复调用。
@@ -127,10 +137,10 @@ public final class PythonProcessHost implements Closeable {
         }
         if (process.isAlive()) {
             channel.send(IpcMessage.of("shutdown", null));
-            if (!awaitExit(GRACEFUL_TIMEOUT_MS)) {
+            if (awaitExit(GRACEFUL_TIMEOUT_MS) == ExitWait.TIMED_OUT) {
                 log.warn("[{}] 未在 {}ms 内优雅退出，强制终止", name, GRACEFUL_TIMEOUT_MS);
                 process.destroy();
-                if (!awaitExit(FORCE_TIMEOUT_MS)) {
+                if (awaitExit(FORCE_TIMEOUT_MS) == ExitWait.TIMED_OUT) {
                     log.warn("[{}] 仍未退出，强杀", name);
                     process.destroyForcibly();
                     awaitExit(FORCE_TIMEOUT_MS);
@@ -138,15 +148,44 @@ public final class PythonProcessHost implements Closeable {
             }
         }
         channel.close();
-        log.info("[{}] Python 进程已停止，exitCode={}", name, process.exitValue());
+        // 不能无条件调 exitValue()：进程未退出时它会抛 IllegalThreadStateException。
+        // 这条路径是可达的 —— 等待被中断时进程可能仍然活着（见 ExitWait.INTERRUPTED）。
+        if (process.isAlive()) {
+            log.warn("[{}] Python 进程仍在运行（关闭流程被中断，未强制终止）", name);
+        } else {
+            log.info("[{}] Python 进程已停止，exitCode={}", name, process.exitValue());
+        }
     }
 
-    private boolean awaitExit(long millis) {
+    /** 等待子进程退出的结果。 */
+    private enum ExitWait {
+        /** 进程已退出。 */
+        EXITED,
+        /** 等待超时，进程仍存活。 */
+        TIMED_OUT,
+        /**
+         * 等待被中断，**进程状态未知**。
+         *
+         * <p>必须与 {@link #TIMED_OUT} 区分开：调用方对超时的反应是「强制终止」， 而在被中断时这么做是错的 —— 中断常常发生在应用关闭流程里，此时 3
+         * 秒的优雅窗口 根本没走完，直接 destroy 会让 Python 侧来不及刷状态、关连接、发最后一条消息。 更糟的是日志会报「未在 N ms
+         * 内优雅退出」，声明一个从未发生的超时， 把排查方向带偏。
+         */
+        INTERRUPTED
+    }
+
+    /**
+     * 等待子进程退出。
+     *
+     * <p>注意：本方法会**保留中断标志**（{@link Thread#currentThread()}.interrupt()）， 并且把「被中断」作为独立结果返回，而不是混进「超时」。
+     */
+    private ExitWait awaitExit(long millis) {
         try {
-            return process.waitFor(millis, TimeUnit.MILLISECONDS);
+            return process.waitFor(millis, TimeUnit.MILLISECONDS)
+                    ? ExitWait.EXITED
+                    : ExitWait.TIMED_OUT;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return false;
+            return ExitWait.INTERRUPTED;
         }
     }
 
