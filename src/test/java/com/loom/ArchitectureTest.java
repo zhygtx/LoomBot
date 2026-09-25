@@ -3,6 +3,7 @@ package com.loom;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noFields;
 
+import com.baomidou.mybatisplus.annotation.TableName;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
@@ -92,8 +93,18 @@ class ArchitectureTest {
                     .resideInAPackage("..controller..")
                     .should()
                     .dependOnClassesThat()
+                    .areAnnotatedWith(TableName.class)
+                    .because("Controller 应使用 DTO 而非持久化实体，否则数据库字段一改就直接破坏 API 契约");
+
+    @ArchTest
+    static final ArchRule 实体也不应住在entity包下 =
+            noClasses()
+                    .that()
+                    .resideInAPackage("..controller..")
+                    .should()
+                    .dependOnClassesThat()
                     .resideInAPackage("..entity..")
-                    .because("Controller 应使用 DTO 而非持久化实体，" + "否则数据库字段一改就直接破坏 API 契约");
+                    .because("约定用 @TableName 标注实体；这条顺手堵住「换个包名就绕过上一条」的口子");
 
     // ------------------------------------------------------------------
     // 编码约束
@@ -126,4 +137,39 @@ class ArchitectureTest {
                     .should()
                     .beAnnotatedWith(Autowired.class)
                     .because("字段注入隐藏依赖关系、妨碍不可变设计、且脱离 Spring 容器就无法实例化；" + "统一用构造器注入");
+
+    // ------------------------------------------------------------------
+    // Lombok 的使用边界
+    // ------------------------------------------------------------------
+
+    /**
+     * Lombok 只用来消灭**机械重复**，不用来改变设计。
+     *
+     * <h2>⚠️ 一条重要的边界：架构测试管不了 SOURCE 级注解</h2>
+     *
+     * <p>最初这里写的是「禁止使用 {@code @Data} / {@code @SneakyThrows}」。 结果 ArchUnit 直接抛异常拒绝执行：
+     *
+     * <pre>
+     *   InvalidSyntaxUsageException: Annotation type lombok.Data has @Retention(SOURCE),
+     *   thus the information is gone after compile. So checking this with ArchUnit is useless.
+     * </pre>
+     *
+     * <p>这个报错本身很有价值：{@code @Data} / {@code @ToString} / {@code @SneakyThrows} 全是 {@code SOURCE} 保留
+     * —— 只存在于源码，编译后字节码上什么都不剩。所以 <b>ArchUnit 能约束的只有「注解生成出来的东西」，不是注解本身</b>。 试图绕过这一点（比如查 {@code
+     * toString} 的字节码）会掉进更深的坑： Lombok 生成的方法体未必能被 ArchUnit 的调用图完整表达。
+     *
+     * <h2>所以 Lombok 的滥用靠什么挡？</h2>
+     *
+     * <p>三样东西，都不是架构测试：
+     *
+     * <ol>
+     *   <li><b>默认不引入</b>：本工程只在一个类（{@code WsConnection}）上用了 Lombok。 其余全是 {@code record} —— record
+     *       天生不可变、自带访问器，本来就没有样板代码。 工具用得少，滥用面就小。
+     *   <li><b>一条具体的行为测试</b>：{@code WsConnectionTest} 直接断言 {@code toString()} 里不出现 config
+     *       的值。这比架构规则更直接 —— 它测的是「密钥会不会进日志」这个真实后果。
+     *   <li><b>评审</b>：{@code @Data} 的代价（全字段 equals/hashCode + 不可控 toString） 写在下面这段注释里，需要时看得到。
+     * </ol>
+     *
+     * <p>为一个「还没有人犯的错」写一条会误报的规则，是过度设计。 真正有后果的那件事（密钥进日志）已经有测试守着了。
+     */
 }

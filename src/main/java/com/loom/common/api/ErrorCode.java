@@ -57,7 +57,10 @@ public enum ErrorCode {
     // ---------- 6xxxxx 连接 ----------
     CONNECTION_NOT_FOUND(600000, "连接不存在"),
     CONNECTION_NAME_EXISTS(600001, "连接名已存在"),
-    CONNECTION_UNAVAILABLE(600002, "连接不可用");
+    CONNECTION_UNAVAILABLE(600002, "连接不可用"),
+    CONNECTION_TYPE_UNKNOWN(600003, "适配器未就绪，无法使用该连接类型"),
+    CONNECTION_CONFIG_INVALID(600004, "连接参数不是合法的 JSON 对象"),
+    CONNECTION_TYPE_IMMUTABLE(600005, "连接类型创建后不可修改，请删除后重建");
 
     private final int code;
     private final String message;

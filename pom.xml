@@ -25,6 +25,15 @@
         <spotless.version>3.10.2</spotless.version>
         <google-java-format.version>1.36.1</google-java-format.version>
         <archunit.version>1.5.0</archunit.version>
+        <jacoco.version>0.8.15</jacoco.version>
+        <lombok.version>1.18.46</lombok.version>
+
+        <!-- 需要外部依赖（MySQL / Redis / Python 解释器）的测试所打的 JUnit Tag。
+             CI 上没有这些，所以默认排除；本地要跑就把它清空：
+                 mvn verify -Dtest.excluded.groups=
+             用属性而不是硬编码，是因为「排除」这件事必须能被一次性关掉 ——
+             如果 CI 配好了 MySQL，改一行命令行即可，不用动 pom。 -->
+        <test.excluded.groups>integration</test.excluded.groups>
 
         <!-- 覆盖率门槛（BUNDLE 行覆盖率）。
              这是「棘轮」：定在略低于当前实际值的位置，防止覆盖率倒退。
@@ -89,6 +98,39 @@
             <version>${mybatis-plus.version}</version>
         </dependency>
 
+        <!-- 分页插件所需的 JSqlParser。
+             ⚠️ MyBatis-Plus 3.5.9 起把分页拦截器从 mybatis-plus-extension 挪到了这个
+                可选模块。不加它，PaginationInnerInterceptor 会在运行时抛
+                NoClassDefFoundError；更糟的是如果干脆不注册拦截器，selectPage 会
+                静默地全表返回且 total=0 —— 一个不报错的分页 bug。
+             选非 -4.9 版本：-4.9 是给 JDK 8 用的 JSqlParser 4.x，本工程是 Java 21。 -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+
+        <!-- Lombok：消灭样板代码（getter/setter/构造器/日志字段）。
+
+             ⚠️ 三条必须一起配，少一条就会踩坑：
+
+             1) optional=true —— Lombok 是**编译期**注解处理器，不该传递到使用方的
+                classpath。打成普通依赖会让下游项目莫名多出一个 jar。
+             2) annotationProcessorPaths 显式声明 —— 不写的话，JDK 21 下编译器会走
+                「classpath 上的处理器自动发现」，那个机制已被标记为将来会禁用
+                （javac 会告警 "Annotation processing is enabled because one or more
+                processors were found on the class path"）。显式声明还有个好处：
+                处理器版本与依赖版本由同一处属性控制，不会漂移。
+             3) spring-boot-maven-plugin 的 excludes —— 否则 repackage 会把 Lombok
+                打进 fat jar。它只在编译期有用，运行时留在包里纯属负担（也容易被
+                安全扫描误报）。 -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Flyway：数据库迁移。启动时自动执行 db/migration 下未应用的脚本，
              用 flyway_schema_history 表记录版本，替代「手动跑 SQL + 靠记忆」。
 
@@ -130,6 +172,19 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- MockMvc 支持。
+             ⚠️ Boot 4 把 Web 层的测试自动配置拆成了独立模块：
+                @AutoConfigureMockMvc 从
+                org.springframework.boot.test.autoconfigure.web.servlet
+                搬到了 org.springframework.boot.webmvc.test.autoconfigure，
+                并且不再由 spring-boot-starter-test 传递引入。
+                只加 starter-test 会在编译期直接报「找不到符号」。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
@@ -148,9 +203,47 @@
     <build>
         <finalName>loom</finalName>
         <plugins>
+            <!-- 编译器：显式声明注解处理器路径。
+                 不写这段的话，JDK 21 会从 classpath 自动发现处理器并打印告警，
+                 而那个机制已被标记为将来要移除。显式声明同时也让「谁在参与编译」
+                 变成 pom 里看得见的事实。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Lombok 只在编译期有用，打进 fat jar 是纯粹的负担 -->
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+
+            <!-- 测试执行：默认排除 integration 组。
+                 不加这段的话，CI（无 MySQL / Redis / Python）会因为集成测试失败而红，
+                 结果是有人把集成测试整个删掉 —— 那才是真正的损失。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <excludedGroups>${test.excluded.groups}</excludedGroups>
+                </configuration>
             </plugin>
 
             <!-- 代码格式化：提交前统一风格，消灭格式分歧。
@@ -190,6 +283,7 @@
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
                 <configuration>
                     <!-- 排除「数据载体」与「框架装配」类：
                          实体 / DTO 只有字段，测试它们没有信息量；
