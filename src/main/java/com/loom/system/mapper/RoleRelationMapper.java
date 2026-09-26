@@ -47,7 +47,8 @@ public interface RoleRelationMapper {
     @Insert("INSERT INTO sys_user_role (user_id, role_id) VALUES (#{userId}, #{id})")
     int addUserRole(@Param("userId") long userId, @Param("id") long id);
 
-    @Update("UPDATE sys_user SET status = #{status}, update_time = CURRENT_TIMESTAMP WHERE id = #{userId} AND deleted = 0")
+    @Update(
+            "UPDATE sys_user SET status = #{status}, update_time = CURRENT_TIMESTAMP WHERE id = #{userId} AND deleted = 0")
     int updateUserStatus(@Param("userId") long userId, @Param("status") int status);
 
     @Select("SELECT permission_id FROM sys_role_permission WHERE role_id = #{roleId}")
@@ -65,7 +66,7 @@ public interface RoleRelationMapper {
     @Insert(
             "INSERT INTO sys_permission (id, name, type, perm, status, backend_required, remark) "
                     + "VALUES (#{id}, #{permission}, 'API', #{permission}, 1, 0, '角色授权通配模式') "
-                    + "ON DUPLICATE KEY UPDATE status = 1")
+                    + "ON DUPLICATE KEY UPDATE status = 1, deleted = 0")
     int upsertPermissionPattern(@Param("id") long id, @Param("permission") String permission);
 
     @Select(
@@ -104,8 +105,27 @@ public interface RoleRelationMapper {
             "SELECT COUNT(1) FROM sys_user_role ur JOIN sys_user u ON u.id = ur.user_id AND u.deleted = 0 WHERE ur.role_id = #{roleId}")
     long countUsersWithRole(@Param("roleId") long roleId);
 
+    /**
+     * 持有某角色的**启用**用户数。
+     *
+     * <p>与 {@link #countUsersWithRole} 的区别只在 {@code u.status = 1}：停用用户虽然还挂在角色上，
+     * 但他已经登不进来，不该被算作「这个角色还有人在用」。
+     */
+    @Select(
+            "SELECT COUNT(1) FROM sys_user_role ur JOIN sys_user u ON u.id = ur.user_id AND u.deleted = 0 AND u.status = 1 WHERE ur.role_id = #{roleId}")
+    long countEnabledUsersWithRole(@Param("roleId") long roleId);
+
     @Select("SELECT COUNT(1) FROM sys_user_role WHERE user_id = #{userId} AND role_id = #{roleId}")
     int userHasRole(@Param("userId") long userId, @Param("roleId") long roleId);
+
+    /**
+     * 该用户当前是否是「启用状态且持有该角色」。
+     *
+     * <p>少了 {@code u.status = 1} 会把「已经停用的站长」也算成站长，于是一个纯粹的重复保存会被误判成 「正在停用最后一名站长」而拒绝。
+     */
+    @Select(
+            "SELECT COUNT(1) FROM sys_user_role ur JOIN sys_user u ON u.id = ur.user_id AND u.deleted = 0 AND u.status = 1 WHERE ur.user_id = #{userId} AND ur.role_id = #{roleId}")
+    int enabledUserHasRole(@Param("userId") long userId, @Param("roleId") long roleId);
 
     @Select("SELECT id FROM sys_permission WHERE perm = '*:*:*' AND deleted = 0 LIMIT 1")
     Long selectWildcardPermissionId();

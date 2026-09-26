@@ -168,7 +168,7 @@ INSERT INTO sys_role (id, code, name, sort, status, builtin, remark) VALUES
     (3, 'OWNER', '站长', 10, 1, 1, '最高权限');
 
 INSERT INTO sys_permission (id, name, type, perm, status, backend_required, remark) VALUES
-    (1, '超级权限', 'API', '*:*:*', 1, 0, '三段式 glob 通配全部权限，仅授予站长'),
+    (1, '超级权限', 'API', '*', 1, 0, 'glob 通配全部权限串，仅授予站长'),
     (2, '查看权限目录', 'API', 'system:permission:list', 1, 1, '权限管理入口'),
     (3, '更新权限状态', 'API', 'system:permission:update', 1, 1, '权限管理入口'),
     (4, '查看菜单', 'API', 'system:menu:list', 1, 1, '菜单管理入口'),

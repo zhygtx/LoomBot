@@ -130,15 +130,44 @@ public class RoleRelationService {
         userService.evictAuthorizationCache(userId);
     }
 
+    /**
+     * 一次事务内保存「用户启用状态 + 角色绑定」。
+     *
+     * <h2>为什么合成一个接口，而不是给启停单开一个</h2>
+     *
+     * <p>管理页上启停勾选框和角色是同一行的两列，用户点一次保存只该产生一次网络请求；更要紧的是不能出现 「角色改成功了、启停失败」这种半成品状态 ——
+     * 那会让界面显示的东西和库里的不一致，而下次刷新就变成了 一个说不清的现象。
+     *
+     * <p>循环里逐条调用 {@link #updateUserRoles}。它是 {@code @Transactional} 的同类调用（自调用不走代理），
+     * 事务由本方法这层提供，这正是我们想要的：任意一条变更失败，整批一起回滚。
+     */
     @Transactional
     public void updateUserRolesBatch(List<UserRoleUpdate> updates) {
         updates.forEach(
                 update -> {
+                    // 保护必须在改之前做：改完之后「他原本是不是启用站长」就查不出来了
+                    protectLastEnabledOwner(update.userId(), update.enabled());
                     updateUserRoles(update.userId(), update.roleIds());
                     if (mapper.updateUserStatus(update.userId(), update.enabled() ? 1 : 0) != 1) {
                         throw new BusinessException(ErrorCode.BAD_REQUEST, "用户不存在");
                     }
                 });
+    }
+
+    /**
+     * 拦住「停用最后一名启用站长」。
+     *
+     * <p>这不是防呆，而是防自锁：{@code TokenService.authenticate} 每个请求都会回查用户状态，最后一个启用站长
+     * 一旦被停用，他自己的令牌当场失效，而「重新启用」这个动作又只有站长做得了 —— 界面上再也点不回去，只能改库。 角色侧的同类保护见 {@link #protectLastOwner}。
+     */
+    private void protectLastEnabledOwner(long userId, boolean enabled) {
+        if (enabled) return;
+        Long ownerRoleId = mapper.selectOwnerRoleId();
+        if (ownerRoleId == null) return;
+        // 他现在不是「启用站长」，停用他并不会减少可用站长的数量
+        if (mapper.enabledUserHasRole(userId, ownerRoleId) != 1) return;
+        if (mapper.countEnabledUsersWithRole(ownerRoleId) > 1) return;
+        throw new BusinessException(ErrorCode.BAD_REQUEST, "系统至少需要保留一名启用的站长");
     }
 
     @Transactional

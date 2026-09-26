@@ -4,6 +4,7 @@ import com.loom.common.api.Result;
 import com.loom.common.security.CurrentUser;
 import com.loom.system.dto.MenuResponse;
 import com.loom.system.dto.MenuSaveRequest;
+import com.loom.system.dto.MenuSortRequest;
 import com.loom.system.dto.MenuStatusUpdateRequest;
 import com.loom.system.service.MenuService;
 import jakarta.validation.Valid;
@@ -50,6 +51,18 @@ public class MenuManagementController {
     @PreAuthorize("@permission.has(authentication, 'system:menu:create')")
     public Result<MenuResponse> create(@Valid @RequestBody MenuSaveRequest request) {
         return Result.success(menuService.create(request));
+    }
+
+    /**
+     * 批量排序（拖拽）。只提交受影响的层级，支持顺带改父级。
+     *
+     * <p>路径是 {@code /sort} 而不是 {@code /{id}/sort}：排序的对象是「一层兄弟」而不是单个节点， 硬塞进单节点路径会让人以为一次只能动一条。
+     */
+    @PutMapping("/sort")
+    @PreAuthorize("@permission.has(authentication, 'system:menu:update')")
+    public Result<Void> resort(@Valid @RequestBody MenuSortRequest request) {
+        menuService.resort(request.groups());
+        return Result.success();
     }
 
     @PutMapping("/{id}")

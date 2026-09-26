@@ -8,11 +8,14 @@ import com.loom.common.exception.BusinessException;
 import com.loom.system.domain.Menu;
 import com.loom.system.dto.MenuResponse;
 import com.loom.system.dto.MenuSaveRequest;
+import com.loom.system.dto.MenuSortGroup;
 import com.loom.system.mapper.MenuMapper;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -23,6 +26,9 @@ public class MenuService {
 
     private static final String TYPE_CATALOG = "CATALOG";
     private static final String TYPE_MENU = "MENU";
+
+    /** 同级排序的刻度。和 V1 种子数据里的 10 / 20 一致。 */
+    private static final int SORT_STEP = 10;
 
     private final MenuMapper mapper;
     private final UserService userService;
@@ -118,6 +124,87 @@ public class MenuService {
         menu.setStatus(enabled ? 1 : 0);
         if (mapper.updateById(menu) != 1) {
             throw new BusinessException(ErrorCode.MENU_NOT_FOUND);
+        }
+    }
+
+    /**
+     * 批量排序：把若干层级的菜单重新定序（并允许顺带改父级）。
+     *
+     * <h2>为什么请求是「分组」而不是「一组 id + 一个目标父级」</h2>
+     *
+     * <p>拖拽一次可能同时改变两个层级：从旧父级的列表里摘掉、插进新父级的列表。分组形式让这两件事落在 同一个事务里，不会出现「已经从旧父级摘掉、还没挂到新父级」的中间态。
+     *
+     * <h2>为什么环检测是「整体判一次」而不是「逐条边判」</h2>
+     *
+     * <p>逐条边判断在批量移动时会算错：A 移到 B 下、同时 B 移到 C 下，单看每一条边都合法，合起来才成环。 所以先把新的父子关系全部套到内存里的 map
+     * 上，再对每个节点走一遍到根的路径。菜单总数是几十条量级， 多这一趟遍历换的是「不会漏判」。
+     *
+     * @param groups 只包含受影响的层级，每层是完整的兄弟顺序
+     */
+    @Transactional
+    public void resort(List<MenuSortGroup> groups) {
+        if (groups == null || groups.isEmpty()) {
+            return;
+        }
+
+        Map<Long, Menu> all = new HashMap<>();
+        for (Menu menu : mapper.selectList(null)) {
+            all.put(menu.getId(), menu);
+        }
+
+        // 1) ID 与父级必须存在；同一个菜单不能同时出现在两个层级里（否则它的 parent_id 取决于更新顺序）
+        Set<Long> scheduled = new HashSet<>();
+        for (MenuSortGroup group : groups) {
+            long parentId = group.parentId();
+            if (parentId > 0 && !all.containsKey(parentId)) {
+                throw new BusinessException(ErrorCode.MENU_NOT_FOUND, "父级菜单不存在");
+            }
+            for (Long id : group.ids()) {
+                if (!all.containsKey(id)) {
+                    throw new BusinessException(ErrorCode.MENU_NOT_FOUND, "菜单不存在: " + id);
+                }
+                if (!scheduled.add(id)) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "同一个菜单不能出现在两个层级: " + id);
+                }
+            }
+        }
+
+        // 2) 先在内存里套用新的父子关系，再整体判环
+        Map<Long, Long> parents = new HashMap<>();
+        all.forEach((id, menu) -> parents.put(id, menu.getParentId()));
+        for (MenuSortGroup group : groups) {
+            for (Long id : group.ids()) {
+                parents.put(id, group.parentId());
+            }
+        }
+        for (Long id : parents.keySet()) {
+            Set<Long> path = new HashSet<>();
+            long cursor = id;
+            while (cursor > 0) {
+                if (!path.add(cursor)) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "父菜单不能形成循环");
+                }
+                Long next = parents.get(cursor);
+                if (next == null) {
+                    throw new BusinessException(ErrorCode.MENU_NOT_FOUND, "父菜单不存在");
+                }
+                cursor = next;
+            }
+        }
+
+        // 3) 落库。sort 按 10 递增，和 V1 种子的 10 / 20 保持同一套刻度，
+        //    以后手工插一条也能落在两条之间，不必整体重排。
+        for (MenuSortGroup group : groups) {
+            List<Long> ids = group.ids();
+            for (int index = 0; index < ids.size(); index++) {
+                Menu update = new Menu();
+                update.setId(ids.get(index));
+                update.setParentId(group.parentId());
+                update.setSort((index + 1) * SORT_STEP);
+                if (mapper.updateById(update) != 1) {
+                    throw new BusinessException(ErrorCode.MENU_NOT_FOUND);
+                }
+            }
         }
     }
 
