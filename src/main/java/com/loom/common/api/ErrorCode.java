@@ -45,7 +45,6 @@ public enum ErrorCode {
 
     // ---------- 3xxxxx 系统管理 ----------
     USER_NOT_FOUND(300000, "用户不存在"),
-    ACCOUNT_EXISTS(300001, "账号已存在"),
     ROLE_NOT_FOUND(300002, "角色不存在"),
     ROLE_CODE_EXISTS(300003, "角色标识已存在"),
     BUILTIN_ROLE_READONLY(300004, "内置角色不允许修改或删除"),

@@ -49,14 +49,4 @@ public final class CurrentUser {
     public static long requireId() {
         return id().orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
     }
-
-    /**
-     * 当前调用者的账号；未认证时为 {@code null}。
-     *
-     * <p>注意它返回的是**账号**，不是「用户名」—— 见 V3 迁移与 docs/auth.md 关于这次改名的说明：本项目没有用户间的交流，所以不存在「展示名」这一层，
-     * 这一列只能是账号。
-     */
-    public static String account() {
-        return current().map(AuthUser::account).orElse(null);
-    }
 }

@@ -35,13 +35,12 @@
 
 -- ============================================================================
 --  1. 用户表
---     不含头像 / 昵称：本项目不涉及社区与社交展示，用户名即标识。
+--     不含用户名 / 昵称：邮箱用于认证，用户 ID 用于内部身份归属。
 -- ============================================================================
 CREATE TABLE `sys_user` (
     `id`              BIGINT       NOT NULL                COMMENT '用户 ID（雪花）',
-    `username`        VARCHAR(64)  NOT NULL                COMMENT '登录名',
     `password`        VARCHAR(255) NOT NULL                COMMENT '密码哈希（BCrypt，不存明文）',
-    `email`           VARCHAR(128)     NULL                COMMENT '邮箱（找回密码 / 验证码）',
+    `email`           VARCHAR(128) NOT NULL                COMMENT '邮箱（登录 / 找回密码 / 验证码）',
     `phone`           VARCHAR(32)      NULL                COMMENT '手机号',
     `status`          TINYINT      NOT NULL DEFAULT 1      COMMENT '状态：1=正常，0=停用',
     `last_login_time` DATETIME         NULL                COMMENT '最后登录时间',
@@ -53,16 +52,11 @@ CREATE TABLE `sys_user` (
     `update_by`       BIGINT           NULL                COMMENT '更新人 ID',
     `update_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_username` (`username`),
     KEY `idx_email` (`email`),
     KEY `idx_status` (`status`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci COMMENT = '用户表';
-
--- 注意：uk_username 是唯一索引，配合逻辑删除时「删除后的用户名仍被占用」。
---       若需要复用已删用户的用户名，可把 deleted 改成「删除时写入本行 id」并建联合唯一键。
-
 
 -- ============================================================================
 --  2. 角色表

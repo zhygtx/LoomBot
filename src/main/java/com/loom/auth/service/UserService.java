@@ -24,7 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 用户账号的持久化与授权加载。
+ * 用户持久化与授权加载。
  *
  * <h2>本模块为什么自己持有 {@code sys_user} 的 Mapper</h2>
  *
@@ -90,23 +90,19 @@ public class UserService {
     /**
      * 落库一个新用户并绑定默认角色。
      *
-     * <p>先做一次友好的重复检查（好给出「账号已存在」而不是「系统内部错误」）， 但仍然捕获 {@link DuplicateKeyException} —— 两个请求同时通过检查时，
+     * <p>先做一次友好的邮箱重复检查，但仍然捕获 {@link DuplicateKeyException} —— 两个请求同时通过检查时，
      * 唯一索引是最后一道防线，而这道防线的报错必须被翻译成人话。
      *
      * @return 新用户（{@code id} 已由 {@code id-type: assign_id} 回填）
      */
     @Transactional
-    public SysUser register(String account, String email, String rawPassword) {
+    public SysUser register(String email, String rawPassword) {
         email = normalizeEmail(email);
-        if (existsByAccount(account)) {
-            throw new BusinessException(ErrorCode.ACCOUNT_EXISTS);
-        }
         if (existsByEmail(email)) {
             throw new BusinessException(ErrorCode.EMAIL_EXISTS);
         }
 
         SysUser user = new SysUser();
-        user.setAccount(account);
         user.setEmail(email);
         user.setPassword(passwordEncoder.encode(rawPassword));
         user.setStatus(SysUser.STATUS_ENABLED);
@@ -114,25 +110,20 @@ public class UserService {
             mapper.insert(user);
         } catch (DuplicateKeyException e) {
             // 落到这里说明并发通过了上面的检查 —— 唯一索引是最后一道防线。
-            // 再查一次是为了把错误说准：只回一句「账号或邮箱已被使用」，
-            // 用户改完邮箱再提交发现还是错的，就只能在两个字段之间反复试。
-            log.warn("注册时唯一索引冲突: account={}, email={}", account, email);
-            if (existsByAccount(account)) {
-                throw new BusinessException(ErrorCode.ACCOUNT_EXISTS);
-            }
+            // 再查一次是为了把错误说准，而不是把数据库异常暴露给调用方。
+            log.warn("注册时邮箱唯一索引冲突: email={}", email);
             if (existsByEmail(email)) {
                 throw new BusinessException(ErrorCode.EMAIL_EXISTS);
             }
-            // 都查不到说明冲突来自别处（并发删除、手工改库）。这时给一句不指向具体字段的话，
-            // 总好过指错字段让人白改一轮。
-            throw new BusinessException(ErrorCode.ACCOUNT_EXISTS, "账号或邮箱已被使用");
+            // 都查不到说明冲突来自并发删除或手工改库，仍返回统一的邮箱冲突错误。
+            throw new BusinessException(ErrorCode.EMAIL_EXISTS);
         }
 
         bindDefaultRole(user.getId());
         // 新用户的授权缓存要清掉：注册前的失败尝试可能已经把「空权限」写进缓存，
         // 不清的话这个用户在 TTL 内会一直是「没有角色」。
         evictAuthorizationCache(user.getId());
-        log.info("新用户注册: id={}, account={}", user.getId(), account);
+        log.info("新用户注册: id={}, email={}", user.getId(), email);
         return user;
     }
 
@@ -165,10 +156,6 @@ public class UserService {
         return Optional.ofNullable(mapper.selectById(id));
     }
 
-    public boolean existsByAccount(String account) {
-        return mapper.exists(Wrappers.<SysUser>lambdaQuery().eq(SysUser::getAccount, account));
-    }
-
     public boolean existsByEmail(String email) {
         return mapper.exists(
                 Wrappers.<SysUser>lambdaQuery().eq(SysUser::getEmail, normalizeEmail(email)));
@@ -193,7 +180,7 @@ public class UserService {
     /**
      * 记录本次登录的时间与来源 IP。
      *
-     * <p>刻意不做成「登录失败也要记」—— 那需要一张登录流水表，而它的价值要到 「排查异常登录」时才能兑现。当前先只记最后一次成功登录，够支撑 「我的账号上次什么时候登录的」这个问题。
+     * <p>刻意不做成「登录失败也要记」—— 那需要一张登录流水表，而它的价值要到「排查异常登录」时才能兑现。当前先只记最后一次成功登录。
      */
     public void recordLoginSuccess(Long userId, String ip) {
         SysUser update = new SysUser();
@@ -258,7 +245,6 @@ public class UserService {
     public UserProfileResponse profile(SysUser user) {
         return new UserProfileResponse(
                 user.getId(),
-                user.getAccount(),
                 user.getEmail(),
                 user.getStatus(),
                 roleCodes(user.getId()),

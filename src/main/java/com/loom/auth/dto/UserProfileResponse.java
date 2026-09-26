@@ -17,7 +17,6 @@ import java.util.List;
  * </ul>
  *
  * @param id 用户 ID
- * @param account 账号（唯一标识，不用于登录）
  * @param email 邮箱（登录凭据）
  * @param status 1=正常 0=停用
  * @param roles 角色标识，如 {@code OWNER}
@@ -27,7 +26,6 @@ import java.util.List;
  */
 public record UserProfileResponse(
         Long id,
-        String account,
         String email,
         Integer status,
         List<String> roles,

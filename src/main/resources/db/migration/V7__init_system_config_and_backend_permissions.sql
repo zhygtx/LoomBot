@@ -31,7 +31,7 @@ CREATE TABLE sys_config (
 INSERT INTO sys_config
     (id, config_key, config_value, value_type, config_group, name, description, builtin)
 VALUES
-    (1, 'auth.register.enabled', 'true', 'BOOLEAN', 'AUTH', '允许注册', '关闭后拒绝发送注册验证码和创建新账号', 1),
+    (1, 'auth.register.enabled', 'true', 'BOOLEAN', 'AUTH', '允许注册', '关闭后拒绝发送注册验证码和创建新用户', 1),
     (2, 'auth.login.enabled', 'true', 'BOOLEAN', 'AUTH', '允许登录', '关闭后拒绝签发新的登录令牌，不影响已有会话', 1),
     (3, 'auth.email-code.enabled', 'true', 'BOOLEAN', 'AUTH', '允许发送验证码', '注册和找回密码验证码的总开关', 1),
     (4, 'auth.password-reset.enabled', 'true', 'BOOLEAN', 'AUTH', '允许找回密码', '关闭后拒绝发送找回密码验证码和重置密码', 1);

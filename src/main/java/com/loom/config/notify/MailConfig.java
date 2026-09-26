@@ -26,6 +26,11 @@ import org.springframework.mail.javamail.JavaMailSender;
  *
  * <p>（{@code getIfAvailable()} 在这里是安全的：所有 bean 定义先注册、后实例化， 自动配置的 {@code JavaMailSender}
  * 定义在本次实例化之前就已经在了。）
+ *
+ * <p>本 Bean 刻意命名为 {@code loomMailSender} 而不是 {@code mailSender}：一旦配置了 {@code spring.mail.host}，Boot
+ * 的 {@code MailSenderPropertiesConfiguration} 会注册一个名为 {@code mailSender} 的 {@code JavaMailSender}
+ * Bean；同名 Bean 在「禁止定义覆盖」（Boot 默认）下 会让启动直接失败（BeanDefinitionOverrideException）。本 Bean
+ * 只按类型注入，不依赖名字，改名没有副作用。
  */
 @Configuration
 public class MailConfig {
@@ -33,7 +38,7 @@ public class MailConfig {
     private static final Logger log = LoggerFactory.getLogger(MailConfig.class);
 
     @Bean
-    public MailSender mailSender(
+    public MailSender loomMailSender(
             ObjectProvider<JavaMailSender> javaMailSenderProvider,
             NotifyLogWriter notifyLogWriter,
             @Value("${spring.mail.from:}") String from,

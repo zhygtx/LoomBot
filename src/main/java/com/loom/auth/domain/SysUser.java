@@ -9,13 +9,7 @@ import lombok.Setter;
 import lombok.ToString;
 
 /**
- * 用户账号。
- *
- * <h2>列名为什么是 {@code account} 而不是 {@code username}</h2>
- *
- * <p>登录与找回密码都走**邮箱 + 密码**，所以这一列**不用于登录**。叫它「登录名」会把使用者 引向相反的行为；而项目没有用户之间的交流（无社区 / 无好友 / 无 @提及），也不存在
- * 「别人看到的名字」这层语义。两头都不是，它只能是**账号**：稳定的、唯一的标识。 完整理由见 {@code V3__rename_username_to_account.sql} 与
- * docs/auth.md。
+ * 用户实体。
  *
  * <h2>为什么用 Lombok（D35 的第二个例外）</h2>
  *
@@ -40,9 +34,6 @@ public class SysUser {
     public static final String DEFAULT_ROLE_CODE = "OWNER";
 
     @TableId private Long id;
-
-    /** 账号。唯一标识，**不用于登录**。 */
-    private String account;
 
     /** BCrypt 哈希，绝不存明文。{@code toString} 已排除。 */
     private String password;
@@ -72,7 +63,7 @@ public class SysUser {
     private LocalDateTime updateTime;
 
     /**
-     * 账号是否可登录。
+     * 用户是否可登录。
      *
      * <p>方法名刻意不用 {@code isEnabled()} —— 以 {@code is} 开头的无参方法会被 Jackson 当成属性序列化出去（{@code Result}
      * 里踩过同一个坑）。本类目前不会被直接返回给前端， 但把判据写成「会不会被序列化」而不是「现在有没有被序列化」，才不会被下次改动坑掉。

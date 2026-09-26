@@ -55,7 +55,7 @@ public class AuthService {
     /**
      * 注册。
      *
-     * <p>顺序是「先验验证码，再落库」。反过来（先建账号再验码）会留下一个坏状态： 验证码错了但账号已经建出来了，而用户拿不到这个账号的密码 —— 一行脏数据换不来任何好处。
+     * <p>顺序是「先验验证码，再落库」。反过来（先建用户再验码）会留下一个坏状态：验证码错了但用户已经建出来了，而用户拿不到密码 —— 一行脏数据换不来任何好处。
      *
      * @return 新用户 ID
      */
@@ -64,7 +64,7 @@ public class AuthService {
         systemConfigService.requireEnabled(
                 SystemConfigService.AUTH_REGISTER_ENABLED, ErrorCode.REGISTRATION_DISABLED);
         emailCodeService.verify(EmailCodeScene.REGISTER, request.email(), request.code());
-        SysUser user = userService.register(request.account(), request.email(), request.password());
+        SysUser user = userService.register(request.email(), request.password());
         return user.getId();
     }
 
@@ -75,7 +75,7 @@ public class AuthService {
      *
      * <ol>
      *   <li><b>先找用户再验密码，且两者失败返回同一个错误码</b> —— 区分「邮箱不存在」与 「密码错误」等于免费提供「这个邮箱注册过没有」的查询接口
-     *   <li><b>验完密码才检查是否停用</b> —— 否则任何人都能探测出哪些账号被停用了
+     *   <li><b>验完密码才检查是否停用</b> —— 否则任何人都能探测出哪些用户被停用了
      *   <li><b>最后才记登录时间</b> —— 这样返回给用户的「上次登录时间」是真正的上一次， 而不是他刚刚这一次。「我的账号上次什么时候登录的」正是用户用来发现
      *       异常登录的那个问题，答案要是刚才，这个字段就白留了
      * </ol>
@@ -93,7 +93,7 @@ public class AuthService {
             throw new BusinessException(ErrorCode.LOGIN_FAILED);
         }
         if (!user.enabled()) {
-            log.info("登录被拒（账号停用）: userId={}", user.getId());
+            log.info("登录被拒（用户停用）: userId={}", user.getId());
             throw new BusinessException(ErrorCode.ACCOUNT_DISABLED);
         }
 

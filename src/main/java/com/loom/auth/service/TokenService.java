@@ -24,7 +24,7 @@ import org.springframework.stereotype.Service;
  *
  * <h2>为什么是「JWT + Redis 白名单」而不是纯无状态 JWT</h2>
  *
- * <p>纯无状态 JWT 有一个摆脱不掉的硬伤：**签出去就收不回来**。用户改了密码、账号被停用、 管理员点了「强制下线」，旧令牌在过期前依然有效 —— 而有效期通常以小时计。
+ * <p>纯无状态 JWT 有一个摆脱不掉的硬伤：**签出去就收不回来**。用户改了密码、用户被停用、 管理员点了「强制下线」，旧令牌在过期前依然有效 —— 而有效期通常以小时计。
  * 对「登录」这件事来说，能吊销比省一次 Redis 查询重要得多。
  *
  * <p>做法是给每个令牌一个 {@code jti}，签发时在 Redis 里写一条白名单记录； 校验时除了验签与过期，还要**确认白名单里还有这个 jti**。于是吊销 = 删 Redis 键。
@@ -53,7 +53,6 @@ public class TokenService {
     private static final String KEY_TOKEN = "auth:token:";
     private static final String KEY_USER_TOKENS = "auth:user:tokens:";
 
-    private static final String CLAIM_ACCOUNT = "account";
     private static final String CLAIM_EMAIL = "email";
 
     private static final DefaultRedisScript<Long> ISSUE_SCRIPT =
@@ -105,7 +104,6 @@ public class TokenService {
                         .issuer(properties.issuer())
                         .subject(String.valueOf(user.getId()))
                         .id(jti)
-                        .claim(CLAIM_ACCOUNT, user.getAccount())
                         .claim(CLAIM_EMAIL, user.getEmail())
                         .issuedAt(Date.from(now))
                         .expiration(Date.from(expiresAt))
@@ -153,7 +151,7 @@ public class TokenService {
                 redis.delete(KEY_TOKEN + jti);
                 return Optional.empty();
             }
-            return Optional.of(new AuthUser(id, current.getAccount(), current.getEmail()));
+            return Optional.of(new AuthUser(id, current.getEmail()));
         } catch (NumberFormatException e) {
             log.warn("白名单里的 userId 不是数字，令牌作废: jti={}", jti);
             return Optional.empty();
@@ -188,7 +186,7 @@ public class TokenService {
     /**
      * 吊销某个用户的全部令牌。
      *
-     * <p>改密码、停用账号、管理员强制下线都要走这里。只删白名单键是不够的 —— 那需要先知道有哪些 jti，所以签发时额外维护了「用户 → 全部 jti」的集合。
+     * <p>改密码、停用用户、管理员强制下线都要走这里。只删白名单键是不够的 —— 那需要先知道有哪些 jti，所以签发时额外维护了「用户 → 全部 jti」的集合。
      *
      * <p>注意本方法不做「只保留当前这一个会话」的区分。改密码后要求所有端重新登录， 是刻意选的保守行为：用户改密码的动机往往就是「怀疑密码泄漏了」。
      */
