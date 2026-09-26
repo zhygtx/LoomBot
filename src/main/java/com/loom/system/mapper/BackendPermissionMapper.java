@@ -17,13 +17,14 @@ public interface BackendPermissionMapper {
     @Insert(
             """
             INSERT INTO sys_permission
-                (id, parent_id, name, type, perm, sort, visible, keep_alive, status,
-                 backend_required, last_seen_time, remark)
+                (id, name, type, perm, status, backend_required, last_seen_time, remark)
             VALUES
-                (#{id}, 0, #{permission}, 'API', #{permission}, 0, 0, 0, 1,
-                 1, CURRENT_TIMESTAMP, '后端启动扫描自动发现')
+                (#{id}, #{permission}, 'API', #{permission}, 1, 1, CURRENT_TIMESTAMP,
+                 '后端启动扫描自动发现')
             ON DUPLICATE KEY UPDATE
-                backend_required = 1,
+                   name = VALUES(name),
+                   type = 'API',
+                   backend_required = 1,
                 last_seen_time = CURRENT_TIMESTAMP
             """)
     int upsertBackendPermission(@Param("id") long id, @Param("permission") String permission);
@@ -41,6 +42,20 @@ public interface BackendPermissionMapper {
              ORDER BY perm
             """)
     List<BackendPermissionResponse> selectBackendRequiredPermissions();
+
+    @Select(
+            """
+            SELECT id,
+                   name,
+                   perm AS permission,
+                   status = 1 AS enabled,
+                   backend_required = 1 AS backendRequired,
+                   last_seen_time AS lastSeenTime
+              FROM sys_permission
+             WHERE deleted = 0 AND perm IS NOT NULL
+             ORDER BY perm
+            """)
+    List<BackendPermissionResponse> selectAllPermissions();
 
     @Select(
             """

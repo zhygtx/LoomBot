@@ -6,7 +6,7 @@
  * <ul>
  *   <li>用户管理：增删改查、启用停用、重置密码、分配角色
  *   <li>角色管理：增删改查、内置角色保护、分配权限
- *   <li>权限管理：菜单树维护（{@code sys_permission} 同时是菜单表）、权限串维护
+ *   <li>权限管理：{@code sys_permission} 维护权限串，{@code sys_menu} 独立维护菜单树
  *   <li>连通性探针 {@code /api/system/ping}
  * </ul>
  *

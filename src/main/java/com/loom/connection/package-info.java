@@ -45,7 +45,7 @@
  *
  * <h2>表归属</h2>
  *
- * <p>{@code ws_connection}，脚本见 {@code V2__init_ws_connection.sql}。
+ * <p>{@code ws_connection}，脚本见 {@code V1__bootstrap_schema.sql}。
  *
  * <h2>边界规则</h2>
  *

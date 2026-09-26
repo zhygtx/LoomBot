@@ -214,6 +214,10 @@ public class UserService {
         return cached(userId, KEY_PERMISSIONS, () -> mapper.selectPermissionStrings(userId));
     }
 
+    public java.util.Set<Long> menuIds(Long userId) {
+        return new java.util.HashSet<>(mapper.selectMenuIds(userId));
+    }
+
     /**
      * 清掉某个用户的授权缓存。
      *
@@ -223,6 +227,10 @@ public class UserService {
      */
     public void evictAuthorizationCache(Long userId) {
         redis.delete(List.of(KEY_PERMISSIONS + userId, KEY_ROLES + userId));
+    }
+
+    public void evictUsersWithRole(long roleId) {
+        mapper.selectUserIdsByRole(roleId).forEach(this::evictAuthorizationCache);
     }
 
     private List<String> cached(Long userId, String keyPrefix, Supplier<List<String>> loader) {

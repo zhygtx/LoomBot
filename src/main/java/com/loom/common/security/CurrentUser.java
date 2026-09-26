@@ -19,8 +19,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
  * <p>本类曾经明写「{@link #id()} 恒为 {@link Optional#empty()}」—— 那时 auth 模块没落地， 认证主体只是一个用户名字符串，没有对应 {@code
  * sys_user.id}。现在 JWT 过滤器把 {@link AuthUser} 放进 {@code SecurityContext}，ID 就有了真实来源。
  *
- * <p>{@code ws_connection.owner_user_id} 因此也具备了从 NULL 改回 NOT NULL 的条件 （见 {@code
- * V2__init_ws_connection.sql} 文件头）；迁移本身不在本次变更范围内。
+ * <p>{@code ws_connection.owner_user_id} 使用当前用户 ID 记录连接归属；表结构由 {@code V1__bootstrap_schema.sql} 定义。
  */
 public final class CurrentUser {
 

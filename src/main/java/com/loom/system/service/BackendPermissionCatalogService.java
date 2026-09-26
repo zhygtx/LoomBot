@@ -15,7 +15,13 @@ import org.springframework.transaction.annotation.Transactional;
 public class BackendPermissionCatalogService {
 
     private static final Set<String> CONTROL_PLANE_PERMISSIONS =
-            Set.of("system:permission:list", "system:permission:update");
+            Set.of(
+                    "system:permission:list",
+                    "system:permission:update",
+                    "system:role:list",
+                    "system:role:update",
+                    "system:user:list",
+                    "system:user:update");
 
     private final BackendPermissionMapper mapper;
     private final UserService userService;
@@ -44,6 +50,10 @@ public class BackendPermissionCatalogService {
 
     public List<BackendPermissionResponse> listRequired() {
         return mapper.selectBackendRequiredPermissions();
+    }
+
+    public List<BackendPermissionResponse> listAll() {
+        return mapper.selectAllPermissions();
     }
 
     @Transactional

@@ -33,7 +33,7 @@ package com.loom.common.notify;
  * <ol>
  *   <li>✅ {@code spring-boot-starter-mail}（注意用 starter 而不是只加库，见 {@code environment.md} 第 20 条）
  *   <li>✅ {@code SmtpMailSender} 实现，在 {@code com.loom.config.notify}
- *   <li>✅ {@code notify_log} 表（{@code V4__init_notify_log.sql}）：收件人、业务类型、主题、状态、错误摘要、时间
+ *   <li>✅ {@code notify_log} 表（{@code V1__bootstrap_schema.sql}）：收件人、业务类型、主题、状态、错误摘要、时间
  *   <li>⬜ 模板放 {@code classpath:templates/notify/*.html} —— 目前是纯文本，两个调用方都还不需要富文本
  *   <li>🔶 调用方：{@code auth} 的注册 / 重置密码验证码<b>已接</b>；{@code connection} 的断联通知<b>未接</b> （触发规则见 {@code
  *       decisions.md} D54 / D55）

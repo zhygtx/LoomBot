@@ -53,6 +53,9 @@ public enum ErrorCode {
     EMAIL_EXISTS(300007, "邮箱已被注册"),
     SYSTEM_CONFIG_NOT_FOUND(300008, "系统配置不存在"),
     SYSTEM_CONFIG_VALUE_INVALID(300009, "系统配置值不合法"),
+    MENU_NOT_FOUND(300010, "菜单不存在"),
+    MENU_ROUTE_EXISTS(300011, "菜单路由名称已存在"),
+    MENU_HAS_CHILDREN(300012, "菜单存在子节点，不能直接删除"),
 
     // ---------- 4xxxxx 插件 ----------
     PLUGIN_NOT_FOUND(400000, "插件不存在"),

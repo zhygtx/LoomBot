@@ -55,6 +55,20 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
             """)
     List<String> selectPermissionStrings(@Param("userId") Long userId);
 
+    @Select(
+            """
+            SELECT DISTINCT m.id
+              FROM sys_user_role ur
+              JOIN sys_role r ON r.id = ur.role_id AND r.status = 1 AND r.deleted = 0
+              JOIN sys_role_menu rm ON rm.role_id = ur.role_id
+              JOIN sys_menu m ON m.id = rm.menu_id AND m.status = 1 AND m.visible = 1 AND m.deleted = 0
+             WHERE ur.user_id = #{userId}
+            """)
+    List<Long> selectMenuIds(@Param("userId") Long userId);
+
+    @Select("SELECT user_id FROM sys_user_role WHERE role_id = #{roleId}")
+    List<Long> selectUserIdsByRole(@Param("roleId") Long roleId);
+
     /** 按标识取角色 ID。找不到返回 {@code null}（种子数据缺失时应当报错，见调用方）。 */
     @Select("SELECT id FROM sys_role WHERE code = #{code} AND deleted = 0 LIMIT 1")
     Long selectRoleIdByCode(@Param("code") String code);

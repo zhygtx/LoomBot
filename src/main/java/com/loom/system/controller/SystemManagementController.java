@@ -58,6 +58,13 @@ public class SystemManagementController {
         return Result.success(permissionCatalogService.listRequired());
     }
 
+    /** 角色授权使用的完整权限目录，包含超级权限等非后端扫描记录。 */
+    @GetMapping("/permissions")
+    @PreAuthorize("@permission.has(authentication, 'system:role:list')")
+    public Result<List<BackendPermissionResponse>> permissions() {
+        return Result.success(permissionCatalogService.listAll());
+    }
+
     @PutMapping("/permissions/{id}/status")
     @PreAuthorize("@permission.has(authentication, 'system:permission:update')")
     public Result<Void> updatePermissionStatus(

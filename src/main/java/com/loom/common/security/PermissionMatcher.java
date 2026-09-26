@@ -90,6 +90,13 @@ public class PermissionMatcher {
         return requiredPermissions;
     }
 
+    /** 菜单可见权限复用同一 glob 语义；不要求它一定是后端接口权限。 */
+    public static boolean matchesGrantedPattern(String pattern, String required) {
+        return isValidGrantedPattern(pattern)
+                && isValidGrantedPattern(required)
+                && globMatches(pattern, required);
+    }
+
     private static void collect(AnnotatedElement element, Set<String> output) {
         PreAuthorize annotation =
                 AnnotatedElementUtils.findMergedAnnotation(element, PreAuthorize.class);
