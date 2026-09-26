@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, useId } from 'vue'
+import { Eye, EyeOff } from '@lucide/vue'
 
 const props = withDefaults(
   defineProps<{
@@ -16,6 +17,7 @@ const props = withDefaults(
     revealable?: boolean
     inputmode?: 'email' | 'numeric' | 'text'
     maxlength?: number
+    list?: string
   }>(),
   {
     type: 'text',
@@ -28,6 +30,7 @@ const props = withDefaults(
     revealable: false,
     inputmode: 'text',
     maxlength: undefined,
+    list: undefined,
   },
 )
 
@@ -48,12 +51,17 @@ const resolvedType = computed(() => {
 
 <template>
   <div class="base-field">
-    <label class="base-field__label" :for="inputId">
-      <span class="base-field__label-row">
-        <slot name="label">{{ label }}</slot>
+    <div class="base-field__label-row">
+      <label class="base-field__label" :for="inputId">
+        <span class="base-field__label-text"
+          ><slot name="label">{{ label }}</slot></span
+        >
         <span v-if="required" class="base-field__required" aria-hidden="true">*</span>
+      </label>
+      <span v-if="$slots['label-extra']" class="base-field__label-extra">
+        <slot name="label-extra" />
       </span>
-    </label>
+    </div>
 
     <span class="base-field__control" :class="{ 'base-field__control--error': error }">
       <input
@@ -68,6 +76,7 @@ const resolvedType = computed(() => {
         :required="required"
         :inputmode="inputmode"
         :maxlength="maxlength"
+        :list="list"
         :aria-invalid="Boolean(error)"
         :aria-describedby="error || hint ? messageId : undefined"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
@@ -81,18 +90,21 @@ const resolvedType = computed(() => {
         :disabled="disabled"
         @click="passwordVisible = !passwordVisible"
       >
-        {{ passwordVisible ? '隐藏' : '显示' }}
+        <component :is="passwordVisible ? EyeOff : Eye" :size="18" aria-hidden="true" />
       </button>
       <slot name="suffix" />
     </span>
 
     <span
-      v-if="error || hint"
       :id="messageId"
       class="base-field__message"
-      :class="{ 'base-field__message--error': error }"
+      :class="{
+        'base-field__message--error': error,
+        'base-field__message--empty': !error && !hint,
+      }"
+      aria-live="polite"
     >
-      {{ error || hint }}
+      {{ error || hint || '\u00a0' }}
     </span>
   </div>
 </template>
@@ -104,13 +116,29 @@ const resolvedType = computed(() => {
 }
 
 .base-field__label {
-  display: block;
+  display: inline-flex;
+  min-inline-size: 0;
+  align-items: center;
   color: var(--sys-color-text);
   font: var(--sys-typography-label-strong);
+  gap: 0.2rem;
 }
 
 .base-field__label-row {
-  display: block;
+  display: flex;
+  min-inline-size: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sys-space-3);
+}
+
+.base-field__label-text {
+  min-inline-size: 0;
+}
+
+.base-field__label-extra {
+  flex: 0 0 auto;
+  font: var(--sys-typography-caption);
 }
 
 .base-field__required {
@@ -168,13 +196,17 @@ const resolvedType = computed(() => {
 }
 
 .base-field__reveal {
+  display: grid;
+  flex: 0 0 auto;
+  inline-size: 2.75rem;
+  block-size: 100%;
+  place-items: center;
   align-self: stretch;
   border: 0;
-  padding-inline: var(--sys-space-3);
+  padding: 0;
   background: transparent;
   color: var(--sys-color-text-muted);
   cursor: pointer;
-  font: var(--sys-typography-label);
 }
 
 .base-field__reveal:hover {
@@ -189,5 +221,14 @@ const resolvedType = computed(() => {
 
 .base-field__message--error {
   color: var(--sys-color-danger);
+}
+
+.base-field__message--empty {
+  visibility: hidden;
+}
+
+.base-field__input::-ms-reveal,
+.base-field__input::-ms-clear {
+  display: none;
 }
 </style>

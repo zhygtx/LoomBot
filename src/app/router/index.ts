@@ -29,6 +29,18 @@ export const router = createRouter({
       component: () => import('@modules/auth/pages/ForgotPasswordPage.vue'),
       meta: { title: '找回密码', publicOnly: true },
     },
+    {
+      path: '/system/permissions',
+      name: 'system-permissions',
+      component: () => import('@modules/system/pages/PermissionManagementPage.vue'),
+      meta: { title: '权限管理', requiresAuth: true },
+    },
+    {
+      path: '/system/menus',
+      name: 'system-menus',
+      component: () => import('@modules/system/pages/MenuManagementPage.vue'),
+      meta: { title: '菜单管理', requiresAuth: true },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: () => ({ top: 0 }),

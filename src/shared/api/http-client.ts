@@ -32,12 +32,65 @@ export const httpClient = axios.create({
   },
 })
 
+const NUMERIC_RESPONSE_FIELDS = new Set([
+  'expiresIn',
+  'timestamp',
+  'total',
+  'pageNum',
+  'pageSize',
+  'pages',
+])
+
+function normalizeProtocolIds(
+  value: unknown,
+  direction: 'request' | 'response',
+  key?: string,
+): unknown {
+  if (value === null || value === undefined) return value
+  if (Array.isArray(value)) return value.map((item) => normalizeProtocolIds(item, direction))
+  if (typeof value !== 'object') {
+    if (typeof value === 'number' && isIdKey(key)) {
+      if (!Number.isSafeInteger(value)) throw new ApiError('服务端返回了不安全的数字 ID')
+      return String(value)
+    }
+    if (
+      direction === 'response' &&
+      typeof value === 'string' &&
+      key &&
+      NUMERIC_RESPONSE_FIELDS.has(key)
+    ) {
+      const numeric = Number(value)
+      return Number.isFinite(numeric) ? numeric : value
+    }
+    return value
+  }
+
+  if (Object.getPrototypeOf(value) !== Object.prototype) return value
+
+  return Object.fromEntries(
+    Object.entries(value).map(([entryKey, entryValue]) => [
+      entryKey,
+      normalizeProtocolIds(entryValue, direction, entryKey),
+    ]),
+  )
+}
+
+function isIdKey(key?: string): boolean {
+  return Boolean(key && (key === 'id' || key.endsWith('Id')))
+}
+
 httpClient.interceptors.request.use((config) => {
   const token = readStoredToken()
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  if (config.data && typeof config.data === 'object') {
+    config.data = normalizeProtocolIds(config.data, 'request')
   }
   return config
+})
+
+httpClient.interceptors.response.use((response) => {
+  response.data = normalizeProtocolIds(response.data, 'response')
+  return response
 })
 
 export async function apiRequest<T>(config: AxiosRequestConfig): Promise<T> {

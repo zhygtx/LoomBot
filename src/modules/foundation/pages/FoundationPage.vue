@@ -1,36 +1,124 @@
 <script setup lang="ts">
-import { BaseButton, BaseSurface } from '@shared/ui'
+import { computed, onMounted, ref } from 'vue'
+
+import { ApiError } from '@shared/api/http-client'
+import { BaseButton, BaseNotice, BaseSurface, iconFor } from '@shared/ui'
+
+import { useSessionStore } from '../../auth/model/session-store'
+import { systemApi } from '../../system/api/system-api'
+import type { MenuItem } from '../../system/model/types'
+
+const session = useSessionStore()
+const menus = ref<MenuItem[]>([])
+const loading = ref(true)
+const errorMessage = ref('')
+
+const quickLinks = computed(() =>
+  menus.value
+    .filter((menu) => menu.type === 'MENU' && menu.path)
+    .sort((a, b) => a.sort - b.sort)
+    .slice(0, 4),
+)
+
+async function loadNavigation(): Promise<void> {
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    if (!session.user) await session.loadProfile()
+    menus.value = await systemApi.navigation()
+  } catch (error) {
+    errorMessage.value =
+      error instanceof ApiError ? error.message : '工作台数据加载失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadNavigation)
 </script>
 
 <template>
   <main class="foundation-page">
-    <BaseSurface as="section" class="foundation-card">
-      <span class="foundation-eyebrow">Loom Frontend Foundation</span>
-      <h1>新前端基础结构已建立</h1>
-      <p>
-        当前只包含应用外壳、模块边界、设计令牌与公共 UI 示例。认证和链接管理将在确认页面方案后接入。
-      </p>
-      <div class="foundation-actions">
-        <BaseButton>主要操作</BaseButton>
-        <BaseButton appearance="secondary">次要操作</BaseButton>
+    <header class="foundation-hero">
+      <div>
+        <span class="foundation-eyebrow">Loom / Workspace</span>
+        <h1>工作台</h1>
+        <p>欢迎回来，{{ session.user?.email }}。从这里进入常用功能。</p>
       </div>
-    </BaseSurface>
+      <BaseButton appearance="secondary" size="small" :loading="loading" @click="loadNavigation">
+        刷新状态
+      </BaseButton>
+    </header>
+
+    <BaseNotice v-if="errorMessage" tone="danger">{{ errorMessage }}</BaseNotice>
+
+    <section class="foundation-welcome" aria-label="工作台概览">
+      <BaseSurface padding="large" class="foundation-welcome__surface">
+        <div>
+          <span class="foundation-card__kicker">Workspace overview</span>
+          <h2>保持专注，快速进入工作流</h2>
+          <p>侧边栏会根据当前账号的菜单可见性展示功能，页面权限仍由后端独立校验。</p>
+        </div>
+        <span class="foundation-welcome__mark">
+          <component :is="iconFor('sparkles')" :size="30" />
+        </span>
+      </BaseSurface>
+    </section>
+
+    <section class="foundation-section" aria-labelledby="quick-links-title">
+      <div class="foundation-section__heading">
+        <div>
+          <span class="foundation-card__kicker">Quick access</span>
+          <h2 id="quick-links-title">常用入口</h2>
+        </div>
+        <span class="foundation-section__hint">{{ quickLinks.length }} 个可用入口</span>
+      </div>
+
+      <div v-if="loading" class="foundation-empty">正在加载入口…</div>
+      <div v-else-if="!quickLinks.length" class="foundation-empty">
+        暂无可用入口，请先配置菜单。
+      </div>
+      <div v-else class="foundation-quick-grid">
+        <RouterLink
+          v-for="menu in quickLinks"
+          :key="menu.id"
+          class="foundation-quick-card"
+          :to="menu.path!"
+        >
+          <span class="foundation-quick-card__icon">
+            <component :is="iconFor(menu.iconKey)" :size="20" />
+          </span>
+          <span class="foundation-quick-card__copy">
+            <strong>{{ menu.name }}</strong>
+            <small>{{ menu.remark || menu.path }}</small>
+          </span>
+          <span class="foundation-quick-card__arrow">
+            <component :is="iconFor('arrow')" :size="18" />
+          </span>
+        </RouterLink>
+      </div>
+    </section>
   </main>
 </template>
 
 <style scoped>
 .foundation-page {
   display: grid;
-  min-block-size: 100dvh;
-  padding: var(--sys-space-page);
-  place-items: center;
+  gap: var(--sys-space-7);
+  inline-size: min(100%, 78rem);
+  margin-inline: auto;
 }
 
-.foundation-card {
-  inline-size: min(100%, 44rem);
+.foundation-hero {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--sys-space-5);
+  padding-block: var(--sys-space-2) var(--sys-space-3);
 }
 
-.foundation-eyebrow {
+.foundation-eyebrow,
+.foundation-card__kicker {
   color: var(--sys-color-text-accent);
   font: var(--sys-typography-label);
   letter-spacing: 0.08em;
@@ -38,20 +126,159 @@ import { BaseButton, BaseSurface } from '@shared/ui'
 }
 
 h1 {
-  margin-block: var(--sys-space-3) var(--sys-space-4);
+  margin: var(--sys-space-2) 0 var(--sys-space-3);
   font: var(--sys-typography-display);
 }
 
-p {
-  margin: 0;
-  color: var(--sys-color-text-muted);
-  font: var(--sys-typography-body);
+h2 {
+  margin: var(--sys-space-2) 0 0;
+  font: 700 clamp(1.25rem, 2vw, 1.7rem) / 1.2 var(--ref-font-sans);
 }
 
-.foundation-actions {
+.foundation-hero p,
+.foundation-welcome p {
+  margin: 0;
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-body-compact);
+}
+
+.foundation-welcome__surface {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--sys-space-3);
-  margin-block-start: var(--sys-space-6);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sys-space-6);
+  border-color: color-mix(in srgb, var(--sys-color-action-primary) 16%, var(--sys-color-border));
+  background:
+    radial-gradient(
+      circle at 90% 20%,
+      color-mix(in srgb, var(--sys-color-action-primary) 12%, transparent),
+      transparent 18rem
+    ),
+    var(--sys-color-surface-raised);
+}
+
+.foundation-welcome__mark {
+  display: grid;
+  inline-size: 4.5rem;
+  block-size: 4.5rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 1.5rem;
+  background: color-mix(
+    in srgb,
+    var(--sys-color-action-primary) 10%,
+    var(--sys-color-surface-muted)
+  );
+  color: var(--sys-color-action-primary);
+  font-size: 2rem;
+}
+
+.foundation-section {
+  display: grid;
+  gap: var(--sys-space-4);
+}
+
+.foundation-section__heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--sys-space-4);
+}
+
+.foundation-section__hint {
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+}
+
+.foundation-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sys-space-4);
+}
+
+.foundation-quick-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sys-space-4);
+  border: 1px solid var(--sys-color-border);
+  border-radius: var(--cmp-surface-radius);
+  background: var(--sys-color-surface-raised);
+  padding: var(--sys-space-5);
+  color: var(--sys-color-text);
+  text-decoration: none;
+  transition:
+    border-color var(--sys-motion-fast),
+    background var(--sys-motion-fast),
+    transform var(--sys-motion-fast);
+}
+
+.foundation-quick-card:hover {
+  border-color: color-mix(in srgb, var(--sys-color-action-primary) 42%, var(--sys-color-border));
+  background: color-mix(
+    in srgb,
+    var(--sys-color-action-primary) 5%,
+    var(--sys-color-surface-raised)
+  );
+  transform: translateY(-0.1rem);
+}
+
+.foundation-quick-card__icon {
+  display: grid;
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  place-items: center;
+  border-radius: 0.8rem;
+  background: var(--sys-color-action-subtle-hover);
+  color: var(--sys-color-action-primary);
+  font-weight: 700;
+}
+
+.foundation-quick-card__copy {
+  display: grid;
+  min-inline-size: 0;
+  gap: 0.25rem;
+}
+
+.foundation-quick-card__copy strong {
+  font: var(--sys-typography-body-compact);
+}
+
+.foundation-quick-card__copy small {
+  overflow: hidden;
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.foundation-quick-card__arrow {
+  color: var(--sys-color-text-accent);
+  font-size: 1.1rem;
+}
+
+.foundation-empty {
+  border: 1px dashed var(--sys-color-border-strong);
+  border-radius: var(--cmp-surface-radius);
+  padding: var(--sys-space-7);
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-body-compact);
+  text-align: center;
+}
+
+@media (max-width: 48rem) {
+  .foundation-hero,
+  .foundation-section__heading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .foundation-welcome__surface {
+    align-items: start;
+  }
+
+  .foundation-quick-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

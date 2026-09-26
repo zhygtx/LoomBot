@@ -16,6 +16,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@lucide/vue": "^1.48.0",
     "@tanstack/vue-query": "^5.103.2",
     "axios": "^1.13.2",
     "pinia": "^4.0.3",

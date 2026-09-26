@@ -7,3 +7,5 @@
 @import './base/reset.css' layer(reset);
 @import './base/document.css' layer(base);
 @import '../modules/auth/styles/auth-form.css' layer(components);
+@import '../modules/system/styles/system-page.css' layer(components);
+@import '../app/layout/app-shell.css' layer(components);

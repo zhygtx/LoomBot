@@ -1,6 +1,5 @@
 export interface UserProfile {
-  id: number
-  account: string
+  id: string
   email: string
   status: number
   roles: string[]

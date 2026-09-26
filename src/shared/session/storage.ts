@@ -38,5 +38,5 @@ export function writeStoredSession(session: StoredSession): void {
 export function clearStoredSession(): void {
   localStorage.removeItem(SESSION_STORAGE_KEY)
   // 清理旧前端可能留下的认证数据，避免迁移后产生假登录状态。
-  ;['token', 'userId', 'account', 'email', 'name'].forEach((key) => localStorage.removeItem(key))
+  ;['token', 'userId', 'email', 'name'].forEach((key) => localStorage.removeItem(key))
 }

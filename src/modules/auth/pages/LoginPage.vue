@@ -108,11 +108,8 @@ async function submit(): Promise<void> {
         required
         @blur="errors.password = validateLoginPassword(form.password)"
       >
-        <template #label>
-          <span class="auth-form__field-label">
-            <span>密码</span>
-            <RouterLink v-if="passwordResetEnabled" to="/forgot-password">忘记密码？</RouterLink>
-          </span>
+        <template #label-extra>
+          <RouterLink v-if="passwordResetEnabled" to="/forgot-password">忘记密码？</RouterLink>
         </template>
       </BaseField>
 

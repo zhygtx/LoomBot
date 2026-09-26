@@ -16,7 +16,7 @@ export const authApi = {
       data: payload,
     }),
 
-  register: (payload: { account: string; email: string; code: string; password: string }) =>
+  register: (payload: { email: string; code: string; password: string }) =>
     apiRequest<number>({
       url: '/auth/register',
       method: 'POST',

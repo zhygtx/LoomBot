@@ -1,18 +1,9 @@
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const ACCOUNT_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{2,19}$/
 const CODE_PATTERN = /^\d{6}$/
 
 export function validateEmail(value: string): string {
   if (!value.trim()) return '请输入邮箱'
   if (value.length > 128 || !EMAIL_PATTERN.test(value.trim())) return '请输入有效的邮箱地址'
-  return ''
-}
-
-export function validateAccount(value: string): string {
-  if (!value.trim()) return '请输入账号'
-  if (!ACCOUNT_PATTERN.test(value.trim())) {
-    return '账号需 3~20 位，以字母开头，只含字母、数字、下划线'
-  }
   return ''
 }
 

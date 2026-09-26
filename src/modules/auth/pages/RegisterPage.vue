@@ -8,7 +8,7 @@ import { BaseButton, BaseField, BaseNotice } from '@shared/ui'
 import { authApi } from '../api/auth-api'
 import { useAuthOptions } from '../model/use-auth-options'
 import { useCodeCountdown } from '../model/use-code-countdown'
-import { validateAccount, validateCode, validateEmail, validatePassword } from '../model/validation'
+import { validateCode, validateEmail, validatePassword } from '../model/validation'
 import AuthShell from '../ui/AuthShell.vue'
 
 const router = useRouter()
@@ -16,14 +16,12 @@ const authOptions = useAuthOptions()
 const countdown = useCodeCountdown()
 
 const form = reactive({
-  account: '',
   email: '',
   code: '',
   password: '',
   confirmPassword: '',
 })
 const errors = reactive({
-  account: '',
   email: '',
   code: '',
   password: '',
@@ -46,7 +44,6 @@ function validateConfirmPassword(): string {
 }
 
 function validate(): boolean {
-  errors.account = validateAccount(form.account)
   errors.email = validateEmail(form.email)
   errors.code = validateCode(form.code)
   errors.password = validatePassword(form.password)
@@ -84,7 +81,6 @@ async function submit(): Promise<void> {
   submitting.value = true
   try {
     await authApi.register({
-      account: form.account.trim(),
       email: form.email.trim().toLowerCase(),
       code: form.code,
       password: form.password,
@@ -103,7 +99,7 @@ async function submit(): Promise<void> {
 
 <template>
   <AuthShell
-    eyebrow="Create account"
+    eyebrow="Join Loom"
     title="创建账号"
     description="当前阶段注册用户默认拥有站长权限，仅用于功能联调。"
   >
@@ -118,20 +114,6 @@ async function submit(): Promise<void> {
         暂时无法读取系统入口状态，提交时仍会由服务器进行最终校验。
       </BaseNotice>
       <BaseNotice v-if="notice" :tone="notice.tone">{{ notice.message }}</BaseNotice>
-
-      <BaseField
-        v-model="form.account"
-        label="账号"
-        name="account"
-        autocomplete="username"
-        placeholder="以字母开头，例如 loom_user"
-        hint="3~20 位，只含字母、数字和下划线；登录时使用邮箱。"
-        :error="errors.account"
-        :disabled="formDisabled"
-        :maxlength="20"
-        required
-        @blur="errors.account = validateAccount(form.account)"
-      />
 
       <BaseField
         v-model="form.email"
