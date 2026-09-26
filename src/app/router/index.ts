@@ -41,6 +41,12 @@ export const router = createRouter({
       component: () => import('@modules/system/pages/MenuManagementPage.vue'),
       meta: { title: '菜单管理', requiresAuth: true },
     },
+    {
+      path: '/system/config',
+      name: 'system-config',
+      component: () => import('@modules/system/pages/SystemConfigPage.vue'),
+      meta: { title: '系统配置', requiresAuth: true },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
   scrollBehavior: () => ({ top: 0 }),

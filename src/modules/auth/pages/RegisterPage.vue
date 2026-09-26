@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { ApiError } from '@shared/api/http-client'
-import { BaseButton, BaseField, BaseNotice } from '@shared/ui'
+import { BaseButton, BaseField, BaseNotice, message } from '@shared/ui'
 
 import { authApi } from '../api/auth-api'
 import { useAuthOptions } from '../model/use-auth-options'
@@ -29,7 +29,6 @@ const errors = reactive({
 })
 const submitting = ref(false)
 const sendingCode = ref(false)
-const notice = ref<{ tone: 'danger' | 'info' | 'success'; message: string } | null>(null)
 
 const registerEnabled = computed(() => authOptions.data.value?.registerEnabled ?? true)
 const emailCodeEnabled = computed(() => authOptions.data.value?.emailCodeEnabled ?? true)
@@ -52,7 +51,6 @@ function validate(): boolean {
 }
 
 async function sendCode(): Promise<void> {
-  notice.value = null
   errors.email = validateEmail(form.email)
   if (errors.email || !canSendCode.value) return
 
@@ -62,20 +60,16 @@ async function sendCode(): Promise<void> {
       email: form.email.trim().toLowerCase(),
       scene: 'REGISTER',
     })
-    notice.value = { tone: 'success', message: '验证码已发送，请检查邮箱。' }
+    message.success('验证码已发送，请检查邮箱。')
     countdown.start()
   } catch (error) {
-    notice.value = {
-      tone: 'danger',
-      message: error instanceof ApiError ? error.message : '验证码发送失败，请稍后重试',
-    }
+    message.error(error instanceof ApiError ? error.message : '验证码发送失败，请稍后重试')
   } finally {
     sendingCode.value = false
   }
 }
 
 async function submit(): Promise<void> {
-  notice.value = null
   if (!validate() || !registerEnabled.value) return
 
   submitting.value = true
@@ -87,10 +81,7 @@ async function submit(): Promise<void> {
     })
     await router.replace({ path: '/login', query: { registered: '1' } })
   } catch (error) {
-    notice.value = {
-      tone: 'danger',
-      message: error instanceof ApiError ? error.message : '注册失败，请稍后重试',
-    }
+    message.error(error instanceof ApiError ? error.message : '注册失败，请稍后重试')
   } finally {
     submitting.value = false
   }
@@ -113,7 +104,6 @@ async function submit(): Promise<void> {
       <BaseNotice v-if="authOptions.isError.value" tone="warning">
         暂时无法读取系统入口状态，提交时仍会由服务器进行最终校验。
       </BaseNotice>
-      <BaseNotice v-if="notice" :tone="notice.tone">{{ notice.message }}</BaseNotice>
 
       <BaseField
         v-model="form.email"

@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+
+import { ChevronDown, ChevronRight } from '@lucide/vue'
 
 import { ApiError } from '@shared/api/http-client'
 import { hasPermission } from '@shared/session/permissions'
-import { BaseButton, BaseNotice, BaseSurface } from '@shared/ui'
+import { BaseButton, BaseNotice, BaseSurface, message } from '@shared/ui'
 
 import { useSessionStore } from '../../auth/model/session-store'
 import { systemApi } from '../api/system-api'
@@ -18,14 +20,61 @@ type AccessTab = 'role-permissions' | 'user-roles'
 
 interface PermissionResource {
   key: string
-  label: string
-  items: BackendPermission[]
+  items: PermissionOperation[]
 }
 
 interface PermissionGroup {
   key: string
-  label: string
   resources: PermissionResource[]
+}
+
+interface PermissionOperation extends BackendPermission {
+  key: string
+  label: string
+  description: string
+}
+
+const OPERATION_LABELS: Record<string, string> = {
+  list: '查看',
+  read: '读取',
+  view: '查看',
+  create: '创建',
+  update: '编辑',
+  delete: '删除',
+  manage: '管理',
+  execute: '执行',
+  operate: '操作',
+  export: '导出',
+  upload: '上传',
+}
+
+const PERMISSION_COPY: Record<string, { label: string; description: string }> = {
+  'connection:ws:create': { label: '创建', description: '允许创建 WebSocket 连接' },
+  'connection:ws:delete': { label: '删除', description: '允许删除 WebSocket 连接' },
+  'connection:ws:list': { label: '查看', description: '允许查看 WebSocket 连接列表' },
+  'connection:ws:read': { label: '读取', description: '允许读取 WebSocket 连接详情' },
+  'connection:ws:update': { label: '编辑', description: '允许更新 WebSocket 连接' },
+  'connection:ws:operate': { label: '操作', description: '允许操作 WebSocket 连接' },
+  'system:config:list': { label: '查看', description: '允许查看系统配置列表' },
+  'system:config:update': { label: '编辑', description: '允许更新系统配置' },
+  'system:permission:list': { label: '查看', description: '允许查看权限目录' },
+  'system:permission:update': { label: '编辑', description: '允许更新权限状态' },
+  'system:role:list': { label: '查看', description: '允许查看角色授权' },
+  'system:role:update': { label: '编辑', description: '允许更新角色授权' },
+  'system:user:list': { label: '查看', description: '允许查看用户角色' },
+  'system:user:update': { label: '编辑', description: '允许更新用户角色' },
+  'system:menu:list': { label: '查看', description: '允许查看菜单' },
+  'system:menu:create': { label: '创建', description: '允许创建菜单' },
+  'system:menu:update': { label: '编辑', description: '允许更新菜单' },
+  'system:menu:delete': { label: '删除', description: '允许删除菜单' },
+  'user:account:list': { label: '查看', description: '允许查看用户账户列表' },
+  'user:account:manage': { label: '管理', description: '允许管理用户账户信息' },
+  'workflow:task:view': { label: '查看', description: '允许查看工作流任务' },
+  'workflow:task:execute': { label: '执行', description: '允许执行工作流任务' },
+  'workflow:task:update': { label: '编辑', description: '允许更新工作流任务' },
+  'workflow:task:delete': { label: '删除', description: '允许删除工作流任务' },
+  'log:view': { label: '查看', description: '允许查看系统日志' },
+  'file:upload:create': { label: '上传', description: '允许上传文件' },
 }
 
 const session = useSessionStore()
@@ -34,18 +83,24 @@ const roleSummaries = ref<RoleSummary[]>([])
 const users = ref<UserRoleRelation[]>([])
 const permissions = ref<BackendPermission[]>([])
 const selectedRoleId = ref<string | null>(null)
-const selectedUserId = ref<string | null>(null)
 const activeTab = ref<AccessTab>('role-permissions')
 const permissionQuery = ref('')
+const userQuery = ref('')
+const userPage = ref(1)
+const userPageSize = 20
 const openGroups = ref<string[]>([])
-const openResources = ref<string[]>([])
 const isLoading = ref(true)
 const isRefreshing = ref(false)
 const isSaving = ref(false)
-const errorMessage = ref('')
-const noticeMessage = ref('')
 const loadedRolePermissions = ref(false)
 const loadedUserRoles = ref(false)
+/**
+ * 加载失败标记。失败提示走 Message 提示条，几秒后消失；但提示条消失之后，
+ * 空列表会显示成「暂无可管理的角色」——那是一句假话。所以额外渲染一个常驻的
+ * 失败态占位（含重试）。判据见决策记录 D72。
+ */
+const loadFailed = ref(false)
+const initialUserSnapshots = ref<Record<string, { enabled: boolean; roleIds: string[] }>>({})
 
 const canListRoles = computed(() => hasPermission(session.user?.permissions, 'system:role:list'))
 const canUpdateRoles = computed(() =>
@@ -57,28 +112,110 @@ const canUpdateUsers = computed(() =>
 )
 const canAccess = computed(() => canListRoles.value || canListUsers.value)
 const selectedRole = computed(() => roles.value.find((role) => role.id === selectedRoleId.value))
-const selectedUser = computed(() => users.value.find((user) => user.id === selectedUserId.value))
 const selectedRolePermissionIds = computed<string[]>({
   get: () => selectedRole.value?.permissionIds ?? [],
   set: (ids) => {
     if (selectedRole.value) selectedRole.value.permissionIds = ids
   },
 })
-const selectedUserRoleIds = computed<string[]>({
-  get: () => selectedUser.value?.roleIds ?? [],
-  set: (ids) => {
-    if (selectedUser.value) selectedUser.value.roleIds = ids
-  },
+const filteredUsers = computed(() => {
+  const query = userQuery.value.trim().toLowerCase()
+  if (!query) return users.value
+  return users.value.filter((user) => user.email.toLowerCase().includes(query))
 })
+const userPageCount = computed(() =>
+  Math.max(1, Math.ceil(filteredUsers.value.length / userPageSize)),
+)
+const pagedUsers = computed(() => {
+  const start = (userPage.value - 1) * userPageSize
+  return filteredUsers.value.slice(start, start + userPageSize)
+})
+const changedUsers = computed(() =>
+  users.value.filter((user) => {
+    const snapshot = initialUserSnapshots.value[user.id]
+    const before = `${snapshot?.enabled ?? user.enabled}|${[...(snapshot?.roleIds ?? [])].sort().join(',')}`
+    const after = [...user.roleIds].sort().join(',')
+    return before !== `${user.enabled}|${after}`
+  }),
+)
+
+watch(userQuery, () => {
+  userPage.value = 1
+})
+
+watch(userPageCount, (count) => {
+  if (userPage.value > count) userPage.value = count
+})
+
+function splitPermission(permission: string): [string, string, string] | null {
+  const segments = permission.split(':')
+  return segments.length === 3 && segments.every(Boolean)
+    ? (segments as [string, string, string])
+    : null
+}
+
+function isConcretePermission(permission: string): boolean {
+  const segments = splitPermission(permission)
+  return Boolean(segments && segments.every((segment) => !segment.includes('*')))
+}
+
+function isPatternPermission(permission: string): boolean {
+  const segments = splitPermission(permission)
+  return Boolean(segments && segments.every((segment) => /^[A-Za-z0-9_.-]+$|^\*$/.test(segment)))
+}
+
+function globMatches(pattern: string, value: string): boolean {
+  let patternIndex = 0
+  let valueIndex = 0
+  let lastStar = -1
+  let starValueIndex = -1
+  while (valueIndex < value.length) {
+    if (patternIndex < pattern.length && pattern[patternIndex] === value[valueIndex]) {
+      patternIndex += 1
+      valueIndex += 1
+    } else if (patternIndex < pattern.length && pattern[patternIndex] === '*') {
+      lastStar = patternIndex++
+      starValueIndex = valueIndex
+    } else if (lastStar >= 0) {
+      patternIndex = lastStar + 1
+      valueIndex = ++starValueIndex
+    } else return false
+  }
+  while (patternIndex < pattern.length && pattern[patternIndex] === '*') patternIndex += 1
+  return patternIndex === pattern.length
+}
+
+function operationCopy(permission: BackendPermission, resourceKey: string, operationKey: string) {
+  const copy = PERMISSION_COPY[permission.permission]
+  return {
+    key: operationKey,
+    label: copy?.label ?? OPERATION_LABELS[operationKey] ?? operationKey,
+    description:
+      copy?.description ??
+      (permission.name !== permission.permission
+        ? permission.name
+        : `允许${OPERATION_LABELS[operationKey] ?? operationKey}${resourceKey}`),
+  }
+}
+
+const concretePermissions = computed(() =>
+  permissions.value.filter((permission) => isConcretePermission(permission.permission)),
+)
 
 const permissionGroups = computed<PermissionGroup[]>(() => {
   const query = permissionQuery.value.trim().toLowerCase()
   const groups = new Map<string, Map<string, BackendPermission[]>>()
 
-  permissions.value
+  concretePermissions.value
     .filter((permission) => {
       if (!query) return true
-      return [permission.name, permission.permission].some((value) =>
+      const [moduleKey, resourceKey, operationKey] = splitPermission(permission.permission) ?? [
+        '',
+        '',
+        '',
+      ]
+      const copy = operationCopy(permission, resourceKey, operationKey)
+      return [moduleKey, resourceKey, operationKey, copy.label, copy.description].some((value) =>
         value.toLowerCase().includes(query),
       )
     })
@@ -95,13 +232,19 @@ const permissionGroups = computed<PermissionGroup[]>(() => {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([domain, resources]) => ({
       key: domain,
-      label: domain === 'global' ? '全局权限' : domain,
       resources: [...resources.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([resource, items]) => ({
           key: `${domain}:${resource}`,
-          label: resource === 'general' ? '通用操作' : resource,
-          items: items.sort((left, right) => left.permission.localeCompare(right.permission)),
+          items: items
+            .sort((left, right) => left.permission.localeCompare(right.permission))
+            .map((permission) => {
+              const [, , operation] = splitPermission(permission.permission) ?? ['', '', '']
+              return {
+                ...permission,
+                ...operationCopy(permission, resource, operation),
+              }
+            }),
         })),
     }))
 })
@@ -116,52 +259,94 @@ function toggleGroup(key: string): void {
     : [...openGroups.value, key]
 }
 
-function toggleResource(key: string): void {
-  openResources.value = isOpen(key, openResources.value)
-    ? openResources.value.filter((value) => value !== key)
-    : [...openResources.value, key]
-}
-
-function permissionCount(items: BackendPermission[]): string {
+function permissionCount(items: PermissionOperation[]): string {
   const selected = new Set(selectedRolePermissionIds.value)
-  return `${items.filter((item) => selected.has(item.id)).length}/${items.length}`
+  const available = items.filter((item) => item.enabled)
+  return `${available.filter((item) => selected.has(item.id)).length}/${available.length}`
 }
 
-function setResourceSelection(resource: PermissionResource, checked: boolean): void {
+function setPermissionSelection(items: PermissionOperation[], checked: boolean): void {
   const ids = new Set(selectedRolePermissionIds.value)
-  resource.items
+  items
     .filter((item) => item.enabled)
     .forEach((item) => (checked ? ids.add(item.id) : ids.delete(item.id)))
   selectedRolePermissionIds.value = [...ids]
 }
 
 function setGroupSelection(group: PermissionGroup, checked: boolean): void {
-  group.resources.forEach((resource) => setResourceSelection(resource, checked))
-}
-
-function groupSelected(group: PermissionGroup): boolean {
-  const items = group.resources.flatMap((resource) => resource.items).filter((item) => item.enabled)
-  return (
-    items.length > 0 && items.every((item) => selectedRolePermissionIds.value.includes(item.id))
+  setPermissionSelection(
+    group.resources.flatMap((resource) => resource.items),
+    checked,
   )
 }
 
-function resourceSelected(resource: PermissionResource): boolean {
-  const items = resource.items.filter((item) => item.enabled)
-  return (
-    items.length > 0 && items.every((item) => selectedRolePermissionIds.value.includes(item.id))
-  )
+function selectionState(items: PermissionOperation[]): {
+  checked: boolean
+  indeterminate: boolean
+} {
+  const available = items.filter((item) => item.enabled)
+  const selected = available.filter((item) => selectedRolePermissionIds.value.includes(item.id))
+  return {
+    checked: available.length > 0 && selected.length === available.length,
+    indeterminate: selected.length > 0 && selected.length < available.length,
+  }
+}
+
+function eventChecked(event: Event): boolean {
+  return event.target instanceof HTMLInputElement && event.target.checked
+}
+
+function expandPatternsToConcrete(ids: string[]): string[] {
+  const patterns = permissions.value
+    .filter((permission) => ids.includes(permission.id))
+    .map((permission) => (permission.permission === '*' ? '*:*:*' : permission.permission))
+    .filter(isPatternPermission)
+  return concretePermissions.value
+    .filter((permission) => patterns.some((pattern) => globMatches(pattern, permission.permission)))
+    .map((permission) => permission.id)
+}
+
+function compressSelectionToPatterns(): string[] {
+  const available = concretePermissions.value.filter((permission) => permission.enabled)
+  const selected = new Set(selectedRolePermissionIds.value)
+  if (available.length > 0 && available.every((permission) => selected.has(permission.id))) {
+    return ['*:*:*']
+  }
+
+  const result: string[] = []
+  const allGroups = new Map<string, Map<string, BackendPermission[]>>()
+  available.forEach((permission) => {
+    const [moduleKey, resourceKey] = splitPermission(permission.permission) ?? ['', '']
+    const resources = allGroups.get(moduleKey) ?? new Map<string, BackendPermission[]>()
+    resources.set(resourceKey, [...(resources.get(resourceKey) ?? []), permission])
+    allGroups.set(moduleKey, resources)
+  })
+
+  allGroups.forEach((resources, moduleKey) => {
+    const completeModule = [...resources.values()].every((items) =>
+      items.every((permission) => selected.has(permission.id)),
+    )
+    if (completeModule) {
+      result.push(`${moduleKey}:*:*`)
+      return
+    }
+    resources.forEach((items, resourceKey) => {
+      if (items.every((permission) => selected.has(permission.id))) {
+        result.push(`${moduleKey}:${resourceKey}:*`)
+      } else {
+        items
+          .filter((permission) => selected.has(permission.id))
+          .forEach((permission) => result.push(permission.permission))
+      }
+    })
+  })
+  return [...new Set(result)]
 }
 
 function setInitialSelection(): void {
   if (!selectedRoleId.value) selectedRoleId.value = roles.value[0]?.id ?? null
-  if (!selectedUserId.value) selectedUserId.value = users.value[0]?.id ?? null
   if (openGroups.value.length === 0)
     openGroups.value = permissionGroups.value.map((group) => group.key)
-  if (openResources.value.length === 0)
-    openResources.value = permissionGroups.value.flatMap((group) =>
-      group.resources.map((resource) => resource.key),
-    )
 }
 
 async function loadRolePermissions(): Promise<void> {
@@ -172,6 +357,9 @@ async function loadRolePermissions(): Promise<void> {
   ])
   roles.value = nextRoles
   permissions.value = nextPermissions
+  roles.value.forEach((role) => {
+    role.permissionIds = expandPatternsToConcrete(role.permissionIds)
+  })
   loadedRolePermissions.value = true
   setInitialSelection()
 }
@@ -184,14 +372,16 @@ async function loadUserRoles(): Promise<void> {
   ])
   roleSummaries.value = nextRoles
   users.value = nextUsers
+  initialUserSnapshots.value = Object.fromEntries(
+    users.value.map((user) => [user.id, { enabled: user.enabled, roleIds: [...user.roleIds] }]),
+  )
+  userPage.value = 1
   loadedUserRoles.value = true
   setInitialSelection()
 }
 
 async function loadCurrentTab(force = false): Promise<void> {
   isRefreshing.value = true
-  errorMessage.value = ''
-  noticeMessage.value = ''
   try {
     if (!session.user) await session.loadProfile()
     if (force) {
@@ -200,8 +390,10 @@ async function loadCurrentTab(force = false): Promise<void> {
     }
     if (activeTab.value === 'role-permissions') await loadRolePermissions()
     else await loadUserRoles()
+    loadFailed.value = false
   } catch (error) {
-    errorMessage.value = error instanceof ApiError ? error.message : '权限数据加载失败，请稍后重试'
+    loadFailed.value = true
+    message.error(error instanceof ApiError ? error.message : '权限数据加载失败，请稍后重试')
   } finally {
     isLoading.value = false
     isRefreshing.value = false
@@ -218,28 +410,35 @@ async function switchTab(tab: AccessTab): Promise<void> {
 async function saveRolePermissions(): Promise<void> {
   if (!selectedRole.value || !canUpdateRoles.value) return
   isSaving.value = true
-  errorMessage.value = ''
-  noticeMessage.value = ''
   try {
-    await systemApi.updateRolePermissions(selectedRole.value.id, selectedRolePermissionIds.value)
-    noticeMessage.value = '角色权限已保存'
+    await systemApi.updateRolePermissions(selectedRole.value.id, compressSelectionToPatterns())
+    message.success('角色权限已保存')
   } catch (error) {
-    errorMessage.value = error instanceof ApiError ? error.message : '角色权限保存失败，请稍后重试'
+    message.error(error instanceof ApiError ? error.message : '角色权限保存失败，请稍后重试')
   } finally {
     isSaving.value = false
   }
 }
 
 async function saveUserRoles(): Promise<void> {
-  if (!selectedUser.value || !canUpdateUsers.value) return
+  if (!canUpdateUsers.value || changedUsers.value.length === 0) return
   isSaving.value = true
-  errorMessage.value = ''
-  noticeMessage.value = ''
   try {
-    await systemApi.updateUserRoles(selectedUser.value.id, selectedUserRoleIds.value)
-    noticeMessage.value = '用户角色已保存'
+    await systemApi.updateUserRolesBatch(
+      changedUsers.value.map((user) => ({
+        userId: user.id,
+        enabled: user.enabled,
+        roleIds: user.roleIds,
+      })),
+    )
+    initialUserSnapshots.value = Object.fromEntries(
+      users.value.map((user) => [user.id, { enabled: user.enabled, roleIds: [...user.roleIds] }]),
+    )
+    message.success('用户角色与启用状态已保存')
   } catch (error) {
-    errorMessage.value = error instanceof ApiError ? error.message : '用户角色保存失败，请稍后重试'
+    message.error(
+      error instanceof ApiError ? error.message : '用户角色与启用状态保存失败，请稍后重试',
+    )
   } finally {
     isSaving.value = false
   }
@@ -271,9 +470,6 @@ onMounted(async () => {
         </BaseButton>
       </header>
 
-      <BaseNotice v-if="errorMessage" tone="danger">{{ errorMessage }}</BaseNotice>
-      <BaseNotice v-if="noticeMessage" tone="success">{{ noticeMessage }}</BaseNotice>
-
       <nav v-if="canAccess" class="access-tabs" aria-label="权限管理分区">
         <button
           v-if="canListRoles"
@@ -303,6 +499,13 @@ onMounted(async () => {
       <BaseNotice v-else-if="!canAccess" tone="warning" title="没有权限">
         当前用户没有查看权限关系的权限。
       </BaseNotice>
+
+      <BaseSurface v-else-if="loadFailed" padding="large">
+        <p class="system-page__empty">权限数据没能加载出来。</p>
+        <BaseButton size="small" :loading="isRefreshing" @click="loadCurrentTab(true)">
+          重试
+        </BaseButton>
+      </BaseSurface>
 
       <template v-else-if="activeTab === 'role-permissions' && canListRoles">
         <div class="access-layout">
@@ -348,7 +551,7 @@ onMounted(async () => {
             <div class="permission-toolbar">
               <label class="system-page__filter">
                 <span>筛选权限</span>
-                <input v-model="permissionQuery" type="search" placeholder="搜索名称或权限字符串" />
+                <input v-model="permissionQuery" type="search" placeholder="搜索模块、资源或操作" />
               </label>
               <span class="system-page__count"
                 >{{ selectedRolePermissionIds.length }} 项已选择</span
@@ -358,29 +561,35 @@ onMounted(async () => {
             <div class="permission-groups">
               <article v-for="group in permissionGroups" :key="group.key" class="permission-group">
                 <div class="permission-group__heading">
-                  <button
-                    type="button"
-                    class="permission-group__toggle"
-                    @click="toggleGroup(group.key)"
-                  >
-                    <span
-                      class="permission-group__chevron"
-                      :class="{ 'permission-group__chevron--open': isOpen(group.key, openGroups) }"
-                      >⌄</span
+                  <div class="permission-level permission-level--module">
+                    <input
+                      type="checkbox"
+                      :checked="
+                        selectionState(group.resources.flatMap((resource) => resource.items))
+                          .checked
+                      "
+                      :indeterminate="
+                        selectionState(group.resources.flatMap((resource) => resource.items))
+                          .indeterminate
+                      "
+                      :disabled="!canUpdateRoles"
+                      :aria-label="`选择模块 ${group.key}`"
+                      @change="setGroupSelection(group, eventChecked($event))"
+                    />
+                    <button
+                      type="button"
+                      class="permission-group__toggle"
+                      @click="toggleGroup(group.key)"
                     >
-                    <strong>{{ group.label }}</strong>
-                    <small
-                      >{{ group.resources.flatMap((resource) => resource.items).length }} 项</small
-                    >
-                  </button>
-                  <button
-                    v-if="canUpdateRoles"
-                    type="button"
-                    class="permission-group__select"
-                    @click="setGroupSelection(group, !groupSelected(group))"
-                  >
-                    {{ groupSelected(group) ? '取消全选' : '全选' }}
-                  </button>
+                      <component
+                        :is="isOpen(group.key, openGroups) ? ChevronDown : ChevronRight"
+                        :size="15"
+                        aria-hidden="true"
+                      />
+                      <code>{{ group.key }}</code>
+                      <small>{{ group.resources.length }} 个资源</small>
+                    </button>
+                  </div>
                 </div>
                 <div v-if="isOpen(group.key, openGroups)" class="permission-group__body">
                   <section
@@ -389,51 +598,37 @@ onMounted(async () => {
                     class="permission-resource"
                   >
                     <div class="permission-resource__heading">
-                      <button
-                        type="button"
-                        class="permission-resource__toggle"
-                        @click="toggleResource(resource.key)"
-                      >
-                        <span
-                          class="permission-group__chevron"
-                          :class="{
-                            'permission-group__chevron--open': isOpen(resource.key, openResources),
-                          }"
-                          >⌄</span
-                        >
-                        <strong>{{ resource.label }}</strong>
-                        <small>{{ permissionCount(resource.items) }}</small>
-                      </button>
-                      <button
-                        v-if="canUpdateRoles"
-                        type="button"
-                        class="permission-group__select"
-                        @click="setResourceSelection(resource, !resourceSelected(resource))"
-                      >
-                        {{ resourceSelected(resource) ? '取消全选' : '全选' }}
-                      </button>
-                    </div>
-                    <div
-                      v-if="isOpen(resource.key, openResources)"
-                      class="permission-resource__items"
-                    >
-                      <label
-                        v-for="permission in resource.items"
-                        :key="permission.id"
-                        class="permission-row"
-                      >
+                      <label class="permission-resource__identity" :title="`资源 ${resource.key}`">
                         <input
-                          v-model="selectedRolePermissionIds"
                           type="checkbox"
-                          :value="permission.id"
-                          :disabled="!canUpdateRoles || !permission.enabled"
+                          :checked="selectionState(resource.items).checked"
+                          :indeterminate="selectionState(resource.items).indeterminate"
+                          :disabled="!canUpdateRoles"
+                          :aria-label="`选择资源 ${resource.key}`"
+                          @change="setPermissionSelection(resource.items, eventChecked($event))"
                         />
-                        <span>
-                          <strong>{{ permission.name }}</strong>
-                          <code>{{ permission.permission }}</code>
-                        </span>
-                        <em v-if="!permission.enabled">已停用</em>
+                        <code>{{ resource.key.split(':')[1] }}</code>
+                        <small>{{ permissionCount(resource.items) }}</small>
                       </label>
+                      <div
+                        class="permission-resource__operations"
+                        :aria-label="`资源 ${resource.key} 的操作`"
+                      >
+                        <label
+                          v-for="permission in resource.items"
+                          :key="permission.id"
+                          class="permission-operation"
+                          :title="permission.description"
+                        >
+                          <input
+                            v-model="selectedRolePermissionIds"
+                            type="checkbox"
+                            :value="permission.id"
+                            :disabled="!canUpdateRoles || !permission.enabled"
+                          />
+                          <span>{{ permission.key }}</span>
+                        </label>
+                      </div>
                     </div>
                   </section>
                 </div>
@@ -458,39 +653,80 @@ onMounted(async () => {
               v-if="canUpdateUsers"
               size="small"
               :loading="isSaving"
+              :disabled="changedUsers.length === 0"
               @click="saveUserRoles"
             >
-              保存角色
+              保存变更
             </BaseButton>
           </div>
-          <label class="permission-user-select">
-            <span>选择用户</span>
-            <select v-model="selectedUserId">
-              <option v-for="user in users" :key="user.id" :value="user.id">
-                {{ user.email }}
-              </option>
-            </select>
-          </label>
-          <div v-if="selectedUser" class="user-role-grid">
-            <label
-              v-for="role in roleSummaries"
-              :key="role.id"
-              class="permission-row user-role-row"
-            >
-              <input
-                v-model="selectedUserRoleIds"
-                type="checkbox"
-                :value="role.id"
-                :disabled="!canUpdateUsers || !role.enabled"
-              />
-              <span>
-                <strong>{{ role.name }}</strong>
-                <code>{{ role.code }}</code>
-              </span>
-              <em v-if="!role.enabled">已停用</em>
+          <div class="user-role-toolbar">
+            <label class="system-page__filter">
+              <span>筛选用户</span>
+              <input v-model="userQuery" type="search" placeholder="搜索邮箱" />
             </label>
+            <span class="system-page__count"
+              >{{ filteredUsers.length }} 位用户 · {{ changedUsers.length }} 项待保存</span
+            >
+          </div>
+          <div v-if="users.length" class="user-role-table-wrap">
+            <div
+              class="user-role-table"
+              :style="{
+                '--role-columns': `minmax(16rem, 1.5fr) repeat(${roleSummaries.length}, minmax(7rem, 0.7fr))`,
+              }"
+            >
+              <div class="user-role-table__row user-role-table__row--header">
+                <strong>用户</strong>
+                <strong v-for="role in roleSummaries" :key="role.id">{{ role.name }}</strong>
+              </div>
+              <div v-for="user in pagedUsers" :key="user.id" class="user-role-table__row">
+                <div class="user-role-table__user">
+                  <label
+                    class="user-role-table__status"
+                    :title="user.enabled ? '停用用户' : '启用用户'"
+                  >
+                    <input
+                      v-model="user.enabled"
+                      type="checkbox"
+                      :disabled="!canUpdateUsers"
+                      :aria-label="`${user.email} 的启用状态`"
+                    />
+                  </label>
+                  <div>
+                    <strong>{{ user.email }}</strong>
+                    <small>{{ user.enabled ? '已启用' : '已停用' }}</small>
+                  </div>
+                </div>
+                <label v-for="role in roleSummaries" :key="role.id" class="user-role-table__check">
+                  <input
+                    v-model="user.roleIds"
+                    type="checkbox"
+                    :value="role.id"
+                    :disabled="!canUpdateUsers || !user.enabled || !role.enabled"
+                  />
+                  <span>{{ role.code }}</span>
+                </label>
+              </div>
+            </div>
           </div>
           <p v-else class="system-page__empty">暂无可管理的用户。</p>
+          <div v-if="filteredUsers.length" class="user-role-pagination">
+            <span
+              >显示 {{ (userPage - 1) * userPageSize + 1 }}-{{
+                Math.min(userPage * userPageSize, filteredUsers.length)
+              }}
+              / {{ filteredUsers.length }}</span
+            >
+            <div>
+              <button type="button" :disabled="userPage === 1" @click="userPage -= 1">
+                上一页
+              </button>
+              <strong>{{ userPage }} / {{ userPageCount }}</strong>
+              <button type="button" :disabled="userPage === userPageCount" @click="userPage += 1">
+                下一页
+              </button>
+            </div>
+          </div>
         </BaseSurface>
       </template>
     </div>
@@ -531,7 +767,7 @@ onMounted(async () => {
 
 .access-layout {
   display: grid;
-  grid-template-columns: minmax(13rem, 0.3fr) minmax(0, 1fr);
+  grid-template-columns: minmax(16rem, 0.28fr) minmax(0, 1fr);
   align-items: start;
   gap: var(--sys-space-5);
 }
@@ -626,6 +862,7 @@ onMounted(async () => {
   border: 1px solid var(--sys-color-border);
   border-radius: var(--cmp-surface-radius);
   background: var(--sys-color-surface-raised);
+  box-shadow: 0 0.35rem 1.2rem rgb(20 31 61 / 4%);
 }
 
 .permission-group__heading,
@@ -635,6 +872,28 @@ onMounted(async () => {
   justify-content: space-between;
   gap: var(--sys-space-3);
   padding: var(--sys-space-3) var(--sys-space-4);
+}
+
+.permission-group__heading {
+  min-block-size: 3.25rem;
+  background: color-mix(
+    in srgb,
+    var(--sys-color-action-primary) 4%,
+    var(--sys-color-surface-raised)
+  );
+}
+
+.permission-level {
+  display: flex;
+  min-inline-size: 0;
+  align-items: center;
+  gap: var(--sys-space-3);
+}
+
+.permission-level input,
+.permission-resource__identity input,
+.permission-operation input {
+  accent-color: var(--sys-color-action-primary);
 }
 
 .permission-group__toggle,
@@ -654,6 +913,14 @@ onMounted(async () => {
   font: 700 1rem/1.2 var(--ref-font-sans);
 }
 
+.permission-group__toggle code,
+.permission-resource__identity code,
+.permission-operation span {
+  color: var(--sys-color-text);
+  font-family: var(--ref-font-mono);
+  font-size: 0.86rem;
+}
+
 .permission-resource__toggle strong {
   font: var(--sys-typography-body-compact);
 }
@@ -664,15 +931,9 @@ onMounted(async () => {
   font: var(--sys-typography-caption);
 }
 
-.permission-group__chevron {
-  display: inline-block;
+.permission-group__toggle svg {
+  flex: 0 0 auto;
   color: var(--sys-color-text-muted);
-  transform: rotate(-90deg);
-  transition: transform var(--sys-motion-fast);
-}
-
-.permission-group__chevron--open {
-  transform: rotate(0);
 }
 
 .permission-group__select {
@@ -692,14 +953,51 @@ onMounted(async () => {
 }
 
 .permission-resource__heading {
-  padding-block: var(--sys-space-2);
+  display: flex;
+  min-inline-size: 0;
+  gap: var(--sys-space-4);
+  padding: var(--sys-space-3) var(--sys-space-4);
 }
 
-.permission-resource__items {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--sys-space-2);
-  padding: 0 var(--sys-space-3) var(--sys-space-3);
+.permission-resource__identity {
+  display: flex;
+  min-inline-size: 9rem;
+  flex: 0 0 9rem;
+  align-items: center;
+  gap: var(--sys-space-3);
+  cursor: help;
+}
+
+.permission-resource__identity small {
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+}
+
+.permission-resource__operations {
+  display: flex;
+  min-inline-size: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--sys-space-5);
+  overflow-x: auto;
+  padding-block: 0.15rem;
+  white-space: nowrap;
+}
+
+.permission-operation {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: help;
+}
+
+.permission-operation span {
+  color: var(--sys-color-text-muted);
+}
+
+.permission-operation:hover span {
+  color: var(--sys-color-action-primary);
 }
 
 .permission-row {
@@ -734,14 +1032,140 @@ onMounted(async () => {
 }
 
 .user-role-panel {
-  max-inline-size: 62rem;
+  max-inline-size: none;
 }
 
-.user-role-grid {
+.user-role-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--sys-space-4);
+  margin-block-end: var(--sys-space-5);
+}
+
+.user-role-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--sys-color-border);
+  border-radius: var(--cmp-surface-radius);
+}
+
+.user-role-table {
+  min-inline-size: max(100%, 48rem);
+}
+
+.user-role-table__row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: var(--role-columns);
+  min-block-size: 3.5rem;
+  align-items: center;
+  border-block-end: 1px solid var(--sys-color-border);
+}
+
+.user-role-table__row:last-child {
+  border-block-end: 0;
+}
+
+.user-role-table__row--header {
+  min-block-size: 2.75rem;
+  background: var(--sys-color-action-subtle-hover);
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-label);
+}
+
+.user-role-table__row > * {
+  min-inline-size: 0;
+  padding-inline: var(--sys-space-4);
+}
+
+.user-role-table__user {
+  display: flex;
+  min-inline-size: 0;
+  align-items: center;
   gap: var(--sys-space-3);
-  margin-block-start: var(--sys-space-5);
+}
+
+.user-role-table__user > div {
+  display: grid;
+  min-inline-size: 0;
+  gap: 0.2rem;
+}
+
+.user-role-table__status {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.user-role-table__user strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-role-table__user small {
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+}
+
+.user-role-table__check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sys-space-2);
+  color: var(--sys-color-text-muted);
+  cursor: pointer;
+  font: var(--sys-typography-caption);
+}
+
+.user-role-table__check input {
+  accent-color: var(--sys-color-action-primary);
+}
+
+.user-role-table__status input {
+  inline-size: 1rem;
+  block-size: 1rem;
+  accent-color: var(--sys-color-action-primary);
+}
+
+.user-role-table__check:has(input:checked) {
+  color: var(--sys-color-action-primary);
+  font-weight: 650;
+}
+
+.user-role-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sys-space-4);
+  margin-block-start: var(--sys-space-4);
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+}
+
+.user-role-pagination > div {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sys-space-2);
+}
+
+.user-role-pagination button {
+  min-block-size: 2rem;
+  border: 1px solid var(--sys-color-border);
+  border-radius: 0.45rem;
+  padding-inline: 0.7rem;
+  background: var(--sys-color-surface-raised);
+  color: var(--sys-color-text);
+  cursor: pointer;
+  font: var(--sys-typography-caption);
+}
+
+.user-role-pagination button:hover:not(:disabled) {
+  border-color: var(--sys-color-action-primary);
+  color: var(--sys-color-action-primary);
+}
+
+.user-role-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: var(--sys-opacity-disabled);
 }
 
 @media (max-width: 68rem) {
@@ -769,10 +1193,14 @@ onMounted(async () => {
     flex-direction: column;
   }
 
-  .permission-resource__items,
-  .user-role-grid,
   .access-role-list {
     grid-template-columns: 1fr;
+  }
+
+  .user-role-toolbar,
+  .user-role-pagination {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>

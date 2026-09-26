@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, ChevronRight } from '@lucide/vue'
 
 import { ApiError } from '@shared/api/http-client'
-import { BaseNotice, iconFor, shellIcons } from '@shared/ui'
+import { dismissAllMessages, iconFor, message, shellIcons } from '@shared/ui'
 
 import { useSessionStore } from '../../modules/auth/model/session-store'
 import { systemApi } from '../../modules/system/api/system-api'
@@ -27,7 +27,13 @@ const openGroups = ref<string[]>([])
 const isCollapsed = ref(false)
 const isMobileOpen = ref(false)
 const isLoading = ref(true)
-const errorMessage = ref('')
+/**
+ * 侧边栏的失败占位文案。
+ *
+ * 失败本身已经用提示条报过了，但提示条会消失，而侧边栏会留下一片空白 ——
+ * 所以这里保留一句**状态文案**（不是提示）：它回答「这里为什么是空的」。
+ */
+const loadError = ref('')
 
 const menuTree = computed(() => buildTree(menus.value))
 const sidebarEntries = computed(() => flattenTree(menuTree.value))
@@ -100,19 +106,22 @@ function isInternalPath(path: string | null): boolean {
 
 async function loadNavigation(): Promise<void> {
   isLoading.value = true
-  errorMessage.value = ''
+  loadError.value = ''
   try {
     if (!session.user) await session.loadProfile()
     menus.value = await systemApi.navigation()
     openGroups.value = menus.value.filter((item) => item.type === 'CATALOG').map((item) => item.id)
   } catch (error) {
-    errorMessage.value = error instanceof ApiError ? error.message : '导航加载失败，请稍后重试'
+    loadError.value = '菜单加载失败'
+    message.error(error instanceof ApiError ? error.message : '导航加载失败，请稍后重试')
   } finally {
     isLoading.value = false
   }
 }
 
 function logout(): void {
+  // 上一个会话的提示不该跟到登录页上
+  dismissAllMessages()
   session.clear()
   void router.replace({ name: 'login' })
 }
@@ -163,7 +172,9 @@ onMounted(loadNavigation)
         </RouterLink>
 
         <div v-if="isLoading" class="app-shell__nav-loading">正在加载菜单…</div>
-        <BaseNotice v-else-if="errorMessage" tone="danger">{{ errorMessage }}</BaseNotice>
+        <div v-else-if="loadError" class="app-shell__nav-loading">
+          {{ loadError }}，可点右上角刷新重试。
+        </div>
         <template v-else>
           <template v-for="entry in sidebarEntries" :key="entry.node.id">
             <button

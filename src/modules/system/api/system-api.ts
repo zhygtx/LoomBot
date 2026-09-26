@@ -4,10 +4,13 @@ import type {
   BackendPermission,
   MenuItem,
   MenuPayload,
+  MenuSortGroup,
   RoleMenuRelation,
   RolePermissionRelation,
   RoleRelation,
   RoleSummary,
+  SystemConfig,
+  SystemConfigUpdate,
   UserRoleRelation,
 } from '../model/types'
 
@@ -76,6 +79,17 @@ export const systemApi = {
       data: { enabled },
     }),
 
+  /**
+   * 批量排序。只提交受影响的层级：拖拽一次会同时改「旧父级」和「新父级」两层，
+   * 两组一起提交才能落在一个事务里，不会出现摘下来还没挂上去的中间态。
+   */
+  sortMenus: (groups: MenuSortGroup[]) =>
+    apiRequest<null>({
+      url: '/system/menus/sort',
+      method: 'PUT',
+      data: { groups },
+    }),
+
   listRoleRelations: () =>
     apiRequest<RoleRelation[]>({ url: '/system/relations/roles', method: 'GET' }),
 
@@ -101,11 +115,18 @@ export const systemApi = {
       data: { ids },
     }),
 
-  updateRolePermissions: (id: string, ids: string[]) =>
+  updateUserRolesBatch: (updates: Array<{ userId: string; enabled: boolean; roleIds: string[] }>) =>
+    apiRequest<null>({
+      url: '/system/relations/users/roles/batch',
+      method: 'PUT',
+      data: { updates },
+    }),
+
+  updateRolePermissions: (id: string, permissions: string[]) =>
     apiRequest<null>({
       url: '/system/relations/roles/' + id + '/permissions',
       method: 'PUT',
-      data: { ids },
+      data: { permissions },
     }),
 
   updateRoleMenus: (id: string, ids: string[]) =>
@@ -113,5 +134,23 @@ export const systemApi = {
       url: '/system/relations/roles/' + id + '/menus',
       method: 'PUT',
       data: { ids },
+    }),
+
+  listConfigs: () =>
+    apiRequest<SystemConfig[]>({
+      url: '/system/config',
+      method: 'GET',
+    }),
+
+  /**
+   * 整页一次提交。返回落库后的完整条目，前端据此重置「已修改」基线。
+   *
+   * 每条只有 key + value（JSON 文本）—— 没有单独的启用状态，开关在值里面。
+   */
+  updateConfigs: (updates: SystemConfigUpdate[]) =>
+    apiRequest<SystemConfig[]>({
+      url: '/system/config',
+      method: 'PUT',
+      data: { updates },
     }),
 }

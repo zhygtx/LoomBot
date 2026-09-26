@@ -17,6 +17,29 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--sys-color-action-primary) 48%, transparent) transparent;
+}
+
+*::-webkit-scrollbar {
+  inline-size: 4px;
+  block-size: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sys-color-action-primary) 48%, transparent);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--sys-color-action-primary);
+}
+
 ::selection {
   background: color-mix(in srgb, var(--sys-color-action-primary) 24%, transparent);
 }

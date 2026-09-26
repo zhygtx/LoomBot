@@ -1,9 +1,10 @@
 .system-page {
   min-block-size: 100%;
+  color: var(--sys-color-text);
 }
 
 .system-page__shell {
-  inline-size: min(100%, 78rem);
+  inline-size: min(100%, 86rem);
   margin-inline: auto;
 }
 
@@ -12,7 +13,9 @@
   align-items: end;
   justify-content: space-between;
   gap: var(--sys-space-5);
-  margin-block-end: var(--sys-space-7);
+  margin-block-end: var(--sys-space-5);
+  padding-block-end: var(--sys-space-5);
+  border-block-end: 1px solid var(--sys-color-border);
 }
 
 .system-page__eyebrow {
@@ -24,8 +27,8 @@
 
 .system-page__header h1 {
   margin: var(--sys-space-2) 0 var(--sys-space-3);
-  font: 700 clamp(2rem, 4vw, 3.25rem) / 1.08 var(--ref-font-sans);
-  letter-spacing: -0.04em;
+  font: 750 clamp(1.8rem, 3vw, 2.5rem) / 1.08 var(--ref-font-sans);
+  letter-spacing: -0.02em;
 }
 
 .system-page__header p {
@@ -241,18 +244,8 @@
   }
 }
 
-.menu-page__layout {
-  display: grid;
-  grid-template-columns: minmax(20rem, 0.8fr) minmax(0, 1.2fr);
-  align-items: start;
-  gap: var(--sys-space-5);
-}
-
-.menu-page__editor {
-  position: sticky;
-  inset-block-start: var(--sys-space-5);
-}
-
+/* 菜单结构 tab 的左右分栏与树行样式已移到 MenuManagementPage.vue 的 scoped 样式里
+   （.menu-structure / .menu-tree / .menu-inspector），这里只留表单与分区标题这些共用部分。 */
 .menu-page__section-heading {
   display: flex;
   align-items: start;
@@ -337,123 +330,14 @@
   gap: var(--sys-space-2);
 }
 
-.menu-page__tree {
-  display: grid;
-  gap: var(--sys-space-2);
-}
-
-.menu-page__item {
-  display: grid;
-  grid-template-columns: minmax(11rem, 1fr) minmax(10rem, 1.1fr) auto;
-  align-items: center;
-  gap: var(--sys-space-4);
-  border-block-end: 1px solid var(--sys-color-border);
-  padding-block: var(--sys-space-4);
-}
-
-.menu-page__item:last-child {
-  border-block-end: 0;
-}
-
-.menu-page__item-main {
-  display: flex;
-  min-inline-size: 0;
-  align-items: center;
-  gap: var(--sys-space-3);
-}
-
-.menu-page__item-main--child {
-  padding-inline-start: var(--sys-space-5);
-}
-
-.menu-page__item-marker {
-  flex: 0 0 auto;
-  color: var(--sys-color-text-accent);
-  font-size: 0.65rem;
-}
-
-.menu-page__item-copy {
-  display: grid;
-  min-inline-size: 0;
-  gap: var(--sys-space-1);
-}
-
-.menu-page__item-copy strong {
-  overflow: hidden;
-  color: var(--sys-color-text);
-  font: var(--sys-typography-body-compact);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.menu-page__item-copy span,
-.menu-page__permission,
-.menu-page__parent {
-  overflow: hidden;
-  color: var(--sys-color-text-muted);
-  font: var(--sys-typography-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.menu-page__item-meta {
-  display: grid;
-  min-inline-size: 0;
-  align-items: center;
-  gap: var(--sys-space-1);
-}
-
-.menu-page__item-meta .system-page__status {
-  justify-self: start;
-}
-
-.menu-page__item-actions {
+.menu-page__actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
   gap: var(--sys-space-2);
-}
-
-.menu-page__item-actions button {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--sys-color-text-accent);
-  cursor: pointer;
-  font: var(--sys-typography-caption);
-}
-
-.menu-page__item-actions button:hover:not(:disabled) {
-  text-decoration: underline;
-  text-underline-offset: 0.2em;
-}
-
-.menu-page__item-actions button:disabled {
-  cursor: wait;
-  opacity: var(--sys-opacity-disabled);
-}
-
-@media (max-width: 68rem) {
-  .menu-page__layout {
-    grid-template-columns: 1fr;
-  }
-
-  .menu-page__editor {
-    position: static;
-  }
 }
 
 @media (max-width: 48rem) {
   .menu-page__form-grid {
     grid-template-columns: 1fr;
-  }
-
-  .menu-page__item {
-    grid-template-columns: 1fr;
-    gap: var(--sys-space-3);
-  }
-
-  .menu-page__item-actions {
-    justify-content: flex-start;
   }
 }

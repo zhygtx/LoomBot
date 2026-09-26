@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@shared/api/http-client'
-import { BaseButton, BaseField, BaseNotice } from '@shared/ui'
+import { BaseButton, BaseField, BaseNotice, message } from '@shared/ui'
 
 import { authApi } from '../api/auth-api'
 import { useAuthOptions } from '../model/use-auth-options'
@@ -16,18 +16,56 @@ const router = useRouter()
 const session = useSessionStore()
 const authOptions = useAuthOptions()
 
-const form = reactive({ email: '', password: '' })
+/**
+ * 开发期内置账号，方便本机直接登录测试。
+ *
+ * <p>它由 `V1__bootstrap_schema.sql` 种出来（`admin@loom.local` / `LoomAdmin123`）。
+ * 只在开发构建里预填：生产构建时 `import.meta.env.DEV` 是 false，这里恒为 ''，
+ * 密码不会进产物。
+ *
+ * <p>为什么不判断"这个账号是否真的存在"：那需要一次额外的接口往返，而登录页本来就该
+ * 尽快可用。真到了没有这个账号的环境（比如清掉了种子数据），预填的值是**可以直接改掉的**，
+ * 只是省一次输入，不会把人卡住。
+ */
+const DEV_ACCOUNT = import.meta.env.DEV
+  ? { email: 'admin@loom.local', password: 'LoomAdmin123' }
+  : { email: '', password: '' }
+
+const form = reactive({ email: DEV_ACCOUNT.email, password: DEV_ACCOUNT.password })
 const errors = reactive({ email: '', password: '' })
 const submitting = ref(false)
-const submitError = ref('')
+
+/** 只在开发构建、且还保持着预填值时才提示，避免用户改了之后提示还在 */
+const showDevHint = computed(
+  () =>
+    DEV_ACCOUNT.email !== '' &&
+    form.email === DEV_ACCOUNT.email &&
+    form.password === DEV_ACCOUNT.password,
+)
 
 const loginEnabled = computed(() => authOptions.data.value?.loginEnabled ?? true)
 const registerEnabled = computed(() => authOptions.data.value?.registerEnabled ?? true)
 const passwordResetEnabled = computed(() => authOptions.data.value?.passwordResetEnabled ?? true)
-const successMessage = computed(() => {
-  if (route.query.registered === '1') return '注册成功，请使用邮箱和密码登录。'
-  if (route.query.reset === '1') return '密码已重置，所有旧会话均已失效，请重新登录。'
-  return ''
+
+/**
+ * 注册成功 / 重置成功是「上一个页面交过来的结果」，用提示条报一次就够。
+ *
+ * 报完把 query 里的标记去掉：否则刷新一下页面又会弹一次，而那次刷新跟「刚注册完」已经没关系了。
+ */
+onMounted(() => {
+  const registered = route.query.registered === '1'
+  const reset = route.query.reset === '1'
+  if (!registered && !reset) return
+
+  message.success(
+    registered
+      ? '注册成功，请使用邮箱和密码登录。'
+      : '密码已重置，所有旧会话均已失效，请重新登录。',
+  )
+  const query = { ...route.query }
+  delete query.registered
+  delete query.reset
+  void router.replace({ query })
 })
 
 function validate(): boolean {
@@ -45,7 +83,6 @@ function safeRedirect(): string {
 }
 
 async function submit(): Promise<void> {
-  submitError.value = ''
   if (!validate() || !loginEnabled.value) return
 
   submitting.value = true
@@ -57,7 +94,7 @@ async function submit(): Promise<void> {
     session.acceptLogin(response)
     await router.replace(safeRedirect())
   } catch (error) {
-    submitError.value = error instanceof ApiError ? error.message : '登录失败，请稍后重试'
+    message.error(error instanceof ApiError ? error.message : '登录失败，请稍后重试')
   } finally {
     submitting.value = false
   }
@@ -71,14 +108,17 @@ async function submit(): Promise<void> {
     description="使用注册邮箱继续管理你的连接与自动化。"
   >
     <form class="auth-form" novalidate @submit.prevent="submit">
-      <BaseNotice v-if="successMessage" tone="success">{{ successMessage }}</BaseNotice>
       <BaseNotice v-if="!loginEnabled" tone="warning" title="登录暂时关闭">
         管理员当前禁止签发新的登录令牌，已有会话不受影响。
       </BaseNotice>
       <BaseNotice v-if="authOptions.isError.value" tone="warning">
         暂时无法读取系统入口状态，提交时仍会由服务器进行最终校验。
       </BaseNotice>
-      <BaseNotice v-if="submitError" tone="danger">{{ submitError }}</BaseNotice>
+
+      <!-- 开发构建才有：说明这里的账号密码是从哪来的，免得以为是真账号 -->
+      <BaseNotice v-if="showDevHint" tone="info" title="开发账号已预填">
+        来自数据库种子数据，改掉即可用自己的账号。生产构建不会预填。
+      </BaseNotice>
 
       <BaseField
         v-model="form.email"

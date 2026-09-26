@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { ApiError } from '@shared/api/http-client'
-import { BaseButton, BaseField, BaseNotice } from '@shared/ui'
+import { BaseButton, BaseField, BaseNotice, message } from '@shared/ui'
 
 import { authApi } from '../api/auth-api'
 import { useAuthOptions } from '../model/use-auth-options'
@@ -19,7 +19,6 @@ const form = reactive({ email: '', code: '', newPassword: '', confirmPassword: '
 const errors = reactive({ email: '', code: '', newPassword: '', confirmPassword: '' })
 const submitting = ref(false)
 const sendingCode = ref(false)
-const notice = ref<{ tone: 'danger' | 'info' | 'success'; message: string } | null>(null)
 
 const resetEnabled = computed(() => authOptions.data.value?.passwordResetEnabled ?? true)
 const emailCodeEnabled = computed(() => authOptions.data.value?.emailCodeEnabled ?? true)
@@ -42,7 +41,6 @@ function validate(): boolean {
 }
 
 async function sendCode(): Promise<void> {
-  notice.value = null
   errors.email = validateEmail(form.email)
   if (errors.email || !canSendCode.value) return
 
@@ -52,23 +50,16 @@ async function sendCode(): Promise<void> {
       email: form.email.trim().toLowerCase(),
       scene: 'RESET_PASSWORD',
     })
-    notice.value = {
-      tone: 'info',
-      message: '若该邮箱已注册，验证码已发送。请检查收件箱和垃圾邮件。',
-    }
+    message.info('若该邮箱已注册，验证码已发送。请检查收件箱和垃圾邮件。')
     countdown.start()
   } catch (error) {
-    notice.value = {
-      tone: 'danger',
-      message: error instanceof ApiError ? error.message : '验证码发送失败，请稍后重试',
-    }
+    message.error(error instanceof ApiError ? error.message : '验证码发送失败，请稍后重试')
   } finally {
     sendingCode.value = false
   }
 }
 
 async function submit(): Promise<void> {
-  notice.value = null
   if (!validate() || !resetEnabled.value) return
 
   submitting.value = true
@@ -80,10 +71,7 @@ async function submit(): Promise<void> {
     })
     await router.replace({ path: '/login', query: { reset: '1' } })
   } catch (error) {
-    notice.value = {
-      tone: 'danger',
-      message: error instanceof ApiError ? error.message : '密码重置失败，请稍后重试',
-    }
+    message.error(error instanceof ApiError ? error.message : '密码重置失败，请稍后重试')
   } finally {
     submitting.value = false
   }
@@ -106,7 +94,6 @@ async function submit(): Promise<void> {
       <BaseNotice v-if="authOptions.isError.value" tone="warning">
         暂时无法读取系统入口状态，提交时仍会由服务器进行最终校验。
       </BaseNotice>
-      <BaseNotice v-if="notice" :tone="notice.tone">{{ notice.message }}</BaseNotice>
 
       <BaseField
         v-model="form.email"

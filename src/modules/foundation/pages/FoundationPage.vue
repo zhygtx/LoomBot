@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '@shared/api/http-client'
-import { BaseButton, BaseNotice, BaseSurface, iconFor } from '@shared/ui'
+import { BaseButton, BaseSurface, iconFor, message } from '@shared/ui'
 
 import { useSessionStore } from '../../auth/model/session-store'
 import { systemApi } from '../../system/api/system-api'
@@ -11,7 +11,8 @@ import type { MenuItem } from '../../system/model/types'
 const session = useSessionStore()
 const menus = ref<MenuItem[]>([])
 const loading = ref(true)
-const errorMessage = ref('')
+/** 加载失败时留一个常驻的空态说明，见决策记录 D72：会过期的提示走提示条，状态要留在页面上。 */
+const loadFailed = ref(false)
 
 const quickLinks = computed(() =>
   menus.value
@@ -22,13 +23,13 @@ const quickLinks = computed(() =>
 
 async function loadNavigation(): Promise<void> {
   loading.value = true
-  errorMessage.value = ''
   try {
     if (!session.user) await session.loadProfile()
     menus.value = await systemApi.navigation()
+    loadFailed.value = false
   } catch (error) {
-    errorMessage.value =
-      error instanceof ApiError ? error.message : '工作台数据加载失败，请稍后重试'
+    loadFailed.value = true
+    message.error(error instanceof ApiError ? error.message : '工作台数据加载失败，请稍后重试')
   } finally {
     loading.value = false
   }
@@ -49,8 +50,6 @@ onMounted(loadNavigation)
         刷新状态
       </BaseButton>
     </header>
-
-    <BaseNotice v-if="errorMessage" tone="danger">{{ errorMessage }}</BaseNotice>
 
     <section class="foundation-welcome" aria-label="工作台概览">
       <BaseSurface padding="large" class="foundation-welcome__surface">
@@ -75,6 +74,9 @@ onMounted(loadNavigation)
       </div>
 
       <div v-if="loading" class="foundation-empty">正在加载入口…</div>
+      <div v-else-if="loadFailed" class="foundation-empty">
+        入口没能加载出来，上面的提示条几秒后会消失，可以点右上角「刷新状态」重试。
+      </div>
       <div v-else-if="!quickLinks.length" class="foundation-empty">
         暂无可用入口，请先配置菜单。
       </div>
