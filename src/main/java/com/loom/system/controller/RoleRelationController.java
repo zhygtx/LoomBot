@@ -1,11 +1,13 @@
 package com.loom.system.controller;
 
 import com.loom.common.api.Result;
+import com.loom.system.dto.PermissionUpdateRequest;
 import com.loom.system.dto.RelationUpdateRequest;
 import com.loom.system.dto.RoleMenuResponse;
 import com.loom.system.dto.RolePermissionResponse;
 import com.loom.system.dto.RoleRelationResponse;
 import com.loom.system.dto.RoleSummary;
+import com.loom.system.dto.UserRoleBatchUpdateRequest;
 import com.loom.system.dto.UserRoleResponse;
 import com.loom.system.service.RoleRelationService;
 import jakarta.validation.Valid;
@@ -72,11 +74,18 @@ public class RoleRelationController {
         return Result.success();
     }
 
+    @PutMapping("/users/roles/batch")
+    @PreAuthorize("@permission.has(authentication, 'system:user:update')")
+    public Result<Void> userRolesBatch(@Valid @RequestBody UserRoleBatchUpdateRequest request) {
+        service.updateUserRolesBatch(request.updates());
+        return Result.success();
+    }
+
     @PutMapping("/roles/{id}/permissions")
     @PreAuthorize("@permission.has(authentication, 'system:role:update')")
     public Result<Void> permissions(
-            @PathVariable long id, @Valid @RequestBody RelationUpdateRequest request) {
-        service.updatePermissions(id, request.ids());
+            @PathVariable long id, @Valid @RequestBody PermissionUpdateRequest request) {
+        service.updatePermissions(id, request.permissions());
         return Result.success();
     }
 

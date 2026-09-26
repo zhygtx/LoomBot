@@ -19,8 +19,8 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 /**
  * 方法级权限匹配与后端权限要求加载器。
  *
- * <p>接口要求固定为三段式 domain:resource:action。用户持有的权限是 glob 模式：星号表示 零个或多个任意字符，可以出现在授权模式的任意位置。例如
- * connection:ws:*、 connection:*:read、conn* 和单独的 * 都有效。
+ * <p>接口要求固定为三段式 domain:resource:action。用户持有的权限也是固定三段式 glob 模式，例如 connection:ws:*、connection:*:* 和
+ * *:*:*。
  */
 @Component("permission")
 public class PermissionMatcher {
@@ -149,15 +149,25 @@ public class PermissionMatcher {
         if (pattern == null || pattern.isBlank()) {
             return false;
         }
-        for (int index = 0; index < pattern.length(); index++) {
-            char value = pattern.charAt(index);
-            if (!Character.isLetterOrDigit(value)
-                    && value != '_'
-                    && value != '-'
-                    && value != '.'
-                    && value != ':'
-                    && value != '*') {
+        String[] segments = pattern.split(":", -1);
+        if (segments.length != REQUIRED_SEGMENT_COUNT) {
+            return false;
+        }
+        for (String segment : segments) {
+            if (segment.isEmpty()) {
                 return false;
+            }
+            if ("*".equals(segment)) {
+                continue;
+            }
+            for (int index = 0; index < segment.length(); index++) {
+                char value = segment.charAt(index);
+                if (!Character.isLetterOrDigit(value)
+                        && value != '_'
+                        && value != '-'
+                        && value != '.') {
+                    return false;
+                }
             }
         }
         return true;

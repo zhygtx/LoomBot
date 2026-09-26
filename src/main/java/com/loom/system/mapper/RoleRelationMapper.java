@@ -11,6 +11,7 @@ import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface RoleRelationMapper {
@@ -46,6 +47,9 @@ public interface RoleRelationMapper {
     @Insert("INSERT INTO sys_user_role (user_id, role_id) VALUES (#{userId}, #{id})")
     int addUserRole(@Param("userId") long userId, @Param("id") long id);
 
+    @Update("UPDATE sys_user SET status = #{status}, update_time = CURRENT_TIMESTAMP WHERE id = #{userId} AND deleted = 0")
+    int updateUserStatus(@Param("userId") long userId, @Param("status") int status);
+
     @Select("SELECT permission_id FROM sys_role_permission WHERE role_id = #{roleId}")
     List<Long> selectPermissionIds(@Param("roleId") long roleId);
 
@@ -57,6 +61,20 @@ public interface RoleRelationMapper {
 
     @Insert("INSERT INTO sys_role_permission (role_id, permission_id) VALUES (#{roleId}, #{id})")
     int addPermission(@Param("roleId") long roleId, @Param("id") long id);
+
+    @Insert(
+            "INSERT INTO sys_permission (id, name, type, perm, status, backend_required, remark) "
+                    + "VALUES (#{id}, #{permission}, 'API', #{permission}, 1, 0, '角色授权通配模式') "
+                    + "ON DUPLICATE KEY UPDATE status = 1")
+    int upsertPermissionPattern(@Param("id") long id, @Param("permission") String permission);
+
+    @Select(
+            "<script>"
+                    + "SELECT id FROM sys_permission WHERE deleted = 0 AND perm IN "
+                    + "<foreach item='permission' collection='permissions' open='(' separator=',' close=')'>"
+                    + "#{permission}</foreach>"
+                    + "</script>")
+    List<Long> selectPermissionIdsByPatterns(@Param("permissions") List<String> permissions);
 
     @Delete("DELETE FROM sys_role_menu WHERE role_id = #{roleId}")
     int clearMenus(@Param("roleId") long roleId);
@@ -89,6 +107,6 @@ public interface RoleRelationMapper {
     @Select("SELECT COUNT(1) FROM sys_user_role WHERE user_id = #{userId} AND role_id = #{roleId}")
     int userHasRole(@Param("userId") long userId, @Param("roleId") long roleId);
 
-    @Select("SELECT id FROM sys_permission WHERE perm = '*' AND deleted = 0 LIMIT 1")
+    @Select("SELECT id FROM sys_permission WHERE perm = '*:*:*' AND deleted = 0 LIMIT 1")
     Long selectWildcardPermissionId();
 }

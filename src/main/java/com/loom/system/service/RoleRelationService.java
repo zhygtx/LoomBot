@@ -1,5 +1,6 @@
 package com.loom.system.service;
 
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.loom.auth.service.UserService;
 import com.loom.common.api.ErrorCode;
 import com.loom.common.exception.BusinessException;
@@ -11,8 +12,10 @@ import com.loom.system.dto.RoleRelationResponse;
 import com.loom.system.dto.RoleSummary;
 import com.loom.system.dto.UserRolePair;
 import com.loom.system.dto.UserRoleResponse;
+import com.loom.system.dto.UserRoleUpdate;
 import com.loom.system.mapper.RoleRelationMapper;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -128,9 +131,31 @@ public class RoleRelationService {
     }
 
     @Transactional
-    public void updatePermissions(long roleId, List<Long> ids) {
+    public void updateUserRolesBatch(List<UserRoleUpdate> updates) {
+        updates.forEach(
+                update -> {
+                    updateUserRoles(update.userId(), update.roleIds());
+                    if (mapper.updateUserStatus(update.userId(), update.enabled() ? 1 : 0) != 1) {
+                        throw new BusinessException(ErrorCode.BAD_REQUEST, "用户不存在");
+                    }
+                });
+    }
+
+    @Transactional
+    public void updatePermissions(long roleId, List<String> patterns) {
         requireRole(roleId);
-        requirePermissions(ids);
+        List<String> normalized = normalizePermissionPatterns(patterns);
+        if (normalized.isEmpty()) {
+            protectOwnerWildcard(roleId, List.of());
+            mapper.clearPermissions(roleId);
+            userService.evictUsersWithRole(roleId);
+            return;
+        }
+        normalized.forEach(pattern -> mapper.upsertPermissionPattern(IdWorker.getId(), pattern));
+        List<Long> ids = mapper.selectPermissionIdsByPatterns(normalized);
+        if (ids.size() != normalized.size()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "存在无效权限串");
+        }
         protectOwnerWildcard(roleId, ids);
         mapper.clearPermissions(roleId);
         ids.stream().distinct().forEach(id -> mapper.addPermission(roleId, id));
@@ -158,11 +183,27 @@ public class RoleRelationService {
         }
     }
 
-    private void requirePermissions(List<Long> ids) {
-        for (Long id : ids) {
-            if (mapper.permissionExists(id) != 1)
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "权限不存在: " + id);
+    private List<String> normalizePermissionPatterns(List<String> patterns) {
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String pattern : patterns) {
+            String value = pattern == null ? "" : pattern.trim();
+            String[] segments = value.split(":", -1);
+            if (segments.length != 3
+                    || segments[0].isBlank()
+                    || segments[1].isBlank()
+                    || segments[2].isBlank()
+                    || !isPatternSegment(segments[0])
+                    || !isPatternSegment(segments[1])
+                    || !isPatternSegment(segments[2])) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "权限串必须是三段式: " + value);
+            }
+            normalized.add(value);
         }
+        return List.copyOf(normalized);
+    }
+
+    private boolean isPatternSegment(String segment) {
+        return "*".equals(segment) || segment.matches("[A-Za-z0-9_.-]+");
     }
 
     private Set<Long> normalizeMenuIds(List<Long> ids) {
@@ -197,7 +238,7 @@ public class RoleRelationService {
         if (!"OWNER".equals(mapper.selectRoleCode(roleId))) return;
         Long wildcardId = mapper.selectWildcardPermissionId();
         if (wildcardId != null && !ids.contains(wildcardId)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "站长角色必须保留超级权限 *");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "站长角色必须保留超级权限 *:*:*");
         }
     }
 
