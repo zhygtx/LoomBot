@@ -863,6 +863,19 @@ onMounted(async () => {
   border-radius: var(--cmp-surface-radius);
   background: var(--sys-color-surface-raised);
   box-shadow: 0 0.35rem 1.2rem rgb(20 31 61 / 4%);
+  /*
+   * 这两层都是网格项（.permission-group 在 .permission-groups 里，
+   * .permission-resource 在 .permission-group__body 里），而网格项的自动最小尺寸是
+   * **min-content** —— 里面有 nowrap 的操作项和一排勾选框，min-content 很大。
+   *
+   * 不写这一行的后果不是「挤一点」，而是：网格轨道按 min-content 撑到 700 多像素、
+   * 比父容器还宽，整条链一起被顶宽，于是 .permission-resource__operations 永远有余量、
+   * 永远不产生溢出 —— 它身上的 overflow-x: auto 就成了摆设，页面反而整体横向溢出。
+   *
+   * 写成 0 之后轨道可以收缩到容器宽度，操作区才会真的溢出并出现横向滚动条。
+   * 行高不受影响：布局方向没变，只是允许它变窄。
+   */
+  min-inline-size: 0;
 }
 
 .permission-group__heading,
@@ -982,6 +995,39 @@ onMounted(async () => {
   overflow-x: auto;
   padding-block: 0.15rem;
   white-space: nowrap;
+}
+
+/*
+ * 窄屏：整行一起左右滚动（资源名 + 操作项）。
+ *
+ * 原来只有 .permission-resource__operations 自己滚、资源名固定占 9rem，结果留给操作的
+ * 滚动区很窄（420px 视口下只有 126px、375px 下只有 81px），滑起来憋屈。
+ *
+ * 改成把滚动容器**上移到 heading 这一层**：
+ *   · heading 溢出并横滑，identity 和 operations 都 `flex: 0 0 auto` 保持自然宽度 ——
+ *     两者一起移进移出，操作区能用上整行宽度；
+ *   · operations 不再自己滚，否则会出现「滚动条套滚动条」，手势落在里层就滚不动外层。
+ *
+ * ⚠️ 这段必须放在上面两条基础规则**之后**：同优先级下后写的赢，而 scoped 样式不改变
+ * 层叠顺序。写在前面会被 `flex: 1` / `overflow-x: auto` 直接盖掉，看起来"改了没生效"。
+ *
+ * 行高不变：布局方向仍是 row，只是允许它横向滚动。
+ */
+@media (max-width: 48rem) {
+  .permission-resource__heading {
+    overflow-x: auto;
+  }
+
+  .permission-resource__identity {
+    /* 原来是 flex: 0 0 9rem，这里保持不收缩，跟着一起滚 */
+    flex: 0 0 auto;
+  }
+
+  .permission-resource__operations {
+    flex: 0 0 auto;
+    min-inline-size: auto;
+    overflow-x: visible;
+  }
 }
 
 .permission-operation {

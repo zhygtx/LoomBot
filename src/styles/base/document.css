@@ -17,11 +17,37 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
+/*
+ * 滚动条：默认「隐形」，交互时才浮现。
+ *
+ * ⚠️ 注意 `scrollbar-width` 与 `::-webkit-scrollbar` 的互斥：在 Chrome 里只要
+ * `scrollbar-width` 不是 `auto`，`::-webkit-scrollbar*` 那几条伪元素规则就**完全失效**，
+ * 浏览器只认标准属性。所以下面那组 webkit 规则是为了 Safari 留的，Chrome 走的是
+ * `scrollbar-width` + `scrollbar-color` 这条路。
+ *
+ * 关键点：`scrollbar-color` 只能把**轨道**设成透明，**滑块**仍是实心色 —— 这就是横向滚动条
+ * 一直横在那儿的原因（竖向那条其实也一样，只是不滚动时不容易注意到）。
+ * 想让它"默认看不见、动起来才出现"，得配合 :hover：默认给透明滑块，悬停容器时才上色。
+ *
+ * `scrollbar-gutter: stable` 不能加：它会给滚动容器预留一条永久空白，
+ * 正好和"看起来没有滚动条"的目标相反。
+ */
 * {
   scrollbar-width: thin;
+  /* 默认：滑块透明 —— 滚动条仍然占位、仍然能滚，但看不见 */
+  scrollbar-color: transparent transparent;
+}
+
+/* 指针进入容器（或正在滚动）时才显形，和竖向滚动条的观感保持一致 */
+*:hover,
+*:focus-within {
   scrollbar-color: color-mix(in srgb, var(--sys-color-action-primary) 48%, transparent) transparent;
 }
 
+/*
+ * Safari 等仍走 webkit 伪元素的浏览器。
+ * 这几条在 Chrome 里不生效（见上面的说明），但留着不影响。
+ */
 *::-webkit-scrollbar {
   inline-size: 4px;
   block-size: 4px;
@@ -33,6 +59,10 @@ a {
 
 *::-webkit-scrollbar-thumb {
   border-radius: 999px;
+  background: transparent;
+}
+
+*:hover::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--sys-color-action-primary) 48%, transparent);
 }
 

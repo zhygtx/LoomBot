@@ -1256,9 +1256,9 @@ onMounted(async () => {
                   :aria-label="isMenuOpen(row.node) ? '收起目录' : '展开目录'"
                   @click="toggleMenuGroup(row.node)"
                 >
-                  {{ isMenuOpen(row.node) ? '⌄' : '›' }}
+                  <component :is="isMenuOpen(row.node) ? ChevronDown : ChevronRight" :size="15" />
                 </button>
-                <span v-else class="menu-assignment__expand-placeholder" />
+                <span v-else class="menu-assignment__expand-placeholder" aria-hidden="true" />
                 <input
                   type="checkbox"
                   :checked="isMenuSelected(row.node.id)"
@@ -1382,6 +1382,29 @@ onMounted(async () => {
 
 .menu-tree {
   padding: var(--sys-space-3);
+}
+
+/*
+ * 窄屏时树行改为「父容器内部横向滚动」。
+ *
+ * 和权限管理页的处理**不一样**，因为要的效果不同：
+ *   · 权限管理页那一行是「固定宽的资源名 + 可滚的操作区」——操作区本来就该变窄并自己滚，
+ *     所以那边是让网格项能收缩（min-inline-size: 0），行高不变；
+ *   · 菜单树这一行是**整体**放不下（把手 + 箭头 + 图标 + 名称/路由 + 标签 + 一排按钮），
+ *     没有哪一段该被压扁。所以让它保持自然宽度、由 .menu-tree 滚动，名称不再被省略号截断。
+ *
+ * min-inline-size: max-content 是这里的要点：flex 行默认会被父级压到容器宽度，
+ * 那样不会溢出、也就没有东西可滚，名称反而被 ellipsis 吃掉。
+ * 滚动容器是 .menu-tree（也就是卡片内部），所以横滑不会顶破卡片或整页。
+ */
+@media (max-width: 48rem) {
+  .menu-tree {
+    overflow-x: auto;
+  }
+
+  .menu-tree__row {
+    min-inline-size: max-content;
+  }
 }
 
 .menu-tree__row {
@@ -1835,21 +1858,33 @@ onMounted(async () => {
   padding-block: var(--sys-space-2);
 }
 
+/*
+ * 展开箭头和菜单结构树里的 .menu-tree__twisty 保持一致：同样的 1.5rem 点击区、
+ * 同样的 Lucide ChevronRight/ChevronDown、同样的 hover 反馈。
+ *
+ * 之前这里用的是文字符号 ⌄ / › —— 字形和大小取决于字体，和别的树的图标对不齐，
+ * 屏读器还可能把符号本身念出来。图标更可控。
+ */
 .menu-assignment__expand,
 .menu-assignment__expand-placeholder {
   display: grid;
-  inline-size: 1.4rem;
-  block-size: 1.4rem;
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
   flex: 0 0 auto;
   place-items: center;
 }
 
 .menu-assignment__expand {
   border: 0;
+  border-radius: var(--ref-radius-small);
   background: transparent;
   color: var(--sys-color-text-muted);
   cursor: pointer;
-  font-size: 1.1rem;
+}
+
+.menu-assignment__expand:hover {
+  background: var(--sys-color-action-subtle-hover);
+  color: var(--sys-color-action-primary);
 }
 
 .menu-assignment__copy {
