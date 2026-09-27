@@ -27,11 +27,16 @@ export const systemApi = {
       method: 'GET',
     }),
 
-  updatePermissionStatus: (id: string, enabled: boolean) =>
+  /**
+   * 删除一条权限定义（**真删**）。后端会连带清掉所有角色对它的授权。
+   *
+   * 原来这里还有 `updatePermissionStatus`（启停单条权限）。它随 `sys_permission.status`
+   * 一起删掉了：权限是否生效由角色授权里的勾选决定，不是挂在权限定义上的开关。
+   */
+  deletePermission: (id: string) =>
     apiRequest<null>({
-      url: '/system/permissions/' + id + '/status',
-      method: 'PUT',
-      data: { enabled },
+      url: '/system/relations/permissions/' + id,
+      method: 'DELETE',
     }),
 
   listMenus: () =>
@@ -66,17 +71,15 @@ export const systemApi = {
       data: payload,
     }),
 
+  /**
+   * 删除菜单（**真删**，不是逻辑删除）。
+   *
+   * 后端会拒绝还有子菜单的节点，并在同一个事务里清掉角色菜单关联。
+   */
   deleteMenu: (id: string) =>
     apiRequest<null>({
       url: '/system/menus/' + id,
       method: 'DELETE',
-    }),
-
-  updateMenuStatus: (id: string, enabled: boolean) =>
-    apiRequest<null>({
-      url: '/system/menus/' + id + '/status',
-      method: 'PUT',
-      data: { enabled },
     }),
 
   /**
@@ -134,6 +137,18 @@ export const systemApi = {
       url: '/system/relations/roles/' + id + '/menus',
       method: 'PUT',
       data: { ids },
+    }),
+
+  /**
+   * 删除一个角色（**真删**）。后端会连带清掉它的权限授权、菜单授权和用户绑定。
+   *
+   * 内置角色、以及仍有启用用户挂着的角色会被后端拒绝 —— 与原来「停用角色」上的那条守卫
+   * 是同一件事，只是角色状态列删掉之后它平移到了删除动作上。
+   */
+  deleteRole: (id: string) =>
+    apiRequest<null>({
+      url: '/system/relations/roles/' + id,
+      method: 'DELETE',
     }),
 
   listConfigs: () =>

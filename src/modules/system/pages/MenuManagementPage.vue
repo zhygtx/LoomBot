@@ -10,8 +10,6 @@ import {
   GripVertical,
   Pencil,
   Plus,
-  Power,
-  PowerOff,
   Trash,
   X,
 } from '@lucide/vue'
@@ -65,7 +63,6 @@ const isSaving = ref(false)
 const deletingId = ref<string | null>(null)
 /** 行内二次确认：用它替代 window.confirm，保持和全站组件语言一致。 */
 const confirmDeleteId = ref<string | null>(null)
-const actionId = ref<string | null>(null)
 const selectedMenuId = ref<string | null>(null)
 const panelMode = ref<PanelMode>('detail')
 const draggingId = ref<string | null>(null)
@@ -299,11 +296,15 @@ function parentLabel(parentId: string): string {
   return menus.value.find((menu) => menu.id === parentId)?.name ?? '未知父级'
 }
 
-/** 侧边栏可见性把 enabled 和 visible 两个开关合起来说，省得对着两个勾选框猜为什么菜单不见了。 */
+/**
+ * 侧边栏可见性。
+ *
+ * 原来这里是「enabled 和 visible 两个开关合起来说」。菜单的 status 删掉之后（见
+ * `V1__bootstrap_schema.sql` 末尾），只剩 `visible` 一个字段决定这件事，于是这段解释性
+ * 文案也可以直接说结论了。
+ */
 function sidebarVisibility(menu: MenuItem): string {
-  if (!menu.enabled) return '不出现在侧边栏（已停用）'
-  if (!menu.visible) return '不出现在侧边栏（已隐藏）'
-  return '出现在侧边栏'
+  return menu.visible ? '出现在侧边栏' : '不出现在侧边栏（已隐藏）'
 }
 
 function isStructureOpen(node: MenuNode): boolean {
@@ -499,21 +500,6 @@ async function removeMenu(menu: MenuItem): Promise<void> {
   } finally {
     deletingId.value = null
     confirmDeleteId.value = null
-  }
-}
-
-async function toggleMenu(menu: MenuItem): Promise<void> {
-  if (!canUpdate.value || actionId.value !== null) return
-  actionId.value = menu.id
-  try {
-    await systemApi.updateMenuStatus(menu.id, !menu.enabled)
-    menu.enabled = !menu.enabled
-    invalidateAssignmentCache()
-    message.success(menu.enabled ? '菜单已启用' : '菜单已停用')
-  } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '菜单状态更新失败，请稍后重试')
-  } finally {
-    actionId.value = null
   }
 }
 
@@ -763,7 +749,7 @@ onMounted(async () => {
                 :class="{
                   'menu-tree__row--selected': row.node.id === selectedMenuId,
                   'menu-tree__row--dragging': row.node.id === draggingId,
-                  'menu-tree__row--disabled': !row.node.enabled,
+                  'menu-tree__row--hidden': !row.node.visible,
                   'menu-tree__row--drop-before':
                     dropHint?.id === row.node.id && dropHint.zone === 'before',
                   'menu-tree__row--drop-after':
@@ -818,9 +804,6 @@ onMounted(async () => {
                   <span v-if="!row.node.visible" class="menu-tree__tag menu-tree__tag--muted">
                     隐藏
                   </span>
-                  <span v-if="!row.node.enabled" class="menu-tree__tag menu-tree__tag--danger">
-                    停用
-                  </span>
                 </span>
 
                 <span class="menu-tree__actions" @click.stop>
@@ -858,17 +841,6 @@ onMounted(async () => {
                       @click="startEdit(row.node)"
                     >
                       <component :is="Pencil" :size="15" />
-                    </BaseButton>
-                    <BaseButton
-                      v-if="canUpdate"
-                      appearance="ghost"
-                      size="small"
-                      :title="row.node.enabled ? '停用' : '启用'"
-                      :aria-label="row.node.enabled ? '停用' : '启用'"
-                      :loading="actionId === row.node.id"
-                      @click="toggleMenu(row.node)"
-                    >
-                      <component :is="row.node.enabled ? PowerOff : Power" :size="15" />
                     </BaseButton>
                     <BaseButton
                       v-if="canDelete"
@@ -1135,16 +1107,6 @@ onMounted(async () => {
                   编辑
                 </BaseButton>
                 <BaseButton
-                  v-if="canUpdate"
-                  appearance="secondary"
-                  size="small"
-                  :loading="actionId === selectedMenu.id"
-                  @click="toggleMenu(selectedMenu)"
-                >
-                  <component :is="selectedMenu.enabled ? PowerOff : Power" :size="15" />
-                  {{ selectedMenu.enabled ? '停用' : '启用' }}
-                </BaseButton>
-                <BaseButton
                   v-if="canCreate"
                   appearance="secondary"
                   size="small"
@@ -1262,14 +1224,13 @@ onMounted(async () => {
                 <input
                   type="checkbox"
                   :checked="isMenuSelected(row.node.id)"
-                  :disabled="!canUpdateRoleMenus || !row.node.enabled"
+                  :disabled="!canUpdateRoleMenus"
                   @change="handleMenuChange(row.node, $event)"
                 />
                 <span class="menu-assignment__copy">
                   <strong>{{ row.node.name }}</strong>
                   <code>{{ row.node.path || '目录节点' }}</code>
                 </span>
-                <span v-if="!row.node.enabled" class="menu-assignment__disabled">已停用</span>
               </div>
               <p v-if="!assignmentRows.length" class="system-page__empty">暂无可分配菜单。</p>
             </div>
@@ -1534,9 +1495,14 @@ onMounted(async () => {
   border-radius: 0.2rem;
 }
 
-.menu-tree__row--disabled .menu-tree__copy,
-.menu-tree__row--disabled .menu-tree__icon {
-  opacity: 0.55;
+/*
+ * 「隐藏」不再等同于「停用」。原来这一行是按 enabled 变淡的 —— 但 status 删掉之后
+ * 只剩下 visible，而 hidden 的菜单在角色授权里**仍然可以勾选**（它是「藏起来但保留」，
+ * 不是「不能用」），所以这里只做很轻微的弱化，让它仍然像一条正常的、可操作的行。
+ */
+.menu-tree__row--hidden .menu-tree__copy,
+.menu-tree__row--hidden .menu-tree__icon {
+  opacity: 0.75;
 }
 
 .menu-tree__tags {
@@ -1558,12 +1524,6 @@ onMounted(async () => {
 
 .menu-tree__tag--muted {
   border-style: dashed;
-}
-
-.menu-tree__tag--danger {
-  border-color: var(--sys-color-danger-border);
-  background: var(--sys-color-danger-subtle);
-  color: var(--sys-color-danger-text);
 }
 
 .menu-tree__actions {
@@ -1903,11 +1863,6 @@ onMounted(async () => {
 
 .menu-assignment__copy code {
   color: var(--sys-color-text-muted);
-  font: var(--sys-typography-caption);
-}
-
-.menu-assignment__disabled {
-  color: var(--sys-color-danger-text);
   font: var(--sys-typography-caption);
 }
 

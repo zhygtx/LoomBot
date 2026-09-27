@@ -261,15 +261,12 @@ function toggleGroup(key: string): void {
 
 function permissionCount(items: PermissionOperation[]): string {
   const selected = new Set(selectedRolePermissionIds.value)
-  const available = items.filter((item) => item.enabled)
-  return `${available.filter((item) => selected.has(item.id)).length}/${available.length}`
+  return `${items.filter((item) => selected.has(item.id)).length}/${items.length}`
 }
 
 function setPermissionSelection(items: PermissionOperation[], checked: boolean): void {
   const ids = new Set(selectedRolePermissionIds.value)
-  items
-    .filter((item) => item.enabled)
-    .forEach((item) => (checked ? ids.add(item.id) : ids.delete(item.id)))
+  items.forEach((item) => (checked ? ids.add(item.id) : ids.delete(item.id)))
   selectedRolePermissionIds.value = [...ids]
 }
 
@@ -284,11 +281,10 @@ function selectionState(items: PermissionOperation[]): {
   checked: boolean
   indeterminate: boolean
 } {
-  const available = items.filter((item) => item.enabled)
-  const selected = available.filter((item) => selectedRolePermissionIds.value.includes(item.id))
+  const selected = items.filter((item) => selectedRolePermissionIds.value.includes(item.id))
   return {
-    checked: available.length > 0 && selected.length === available.length,
-    indeterminate: selected.length > 0 && selected.length < available.length,
+    checked: items.length > 0 && selected.length === items.length,
+    indeterminate: selected.length > 0 && selected.length < items.length,
   }
 }
 
@@ -307,7 +303,7 @@ function expandPatternsToConcrete(ids: string[]): string[] {
 }
 
 function compressSelectionToPatterns(): string[] {
-  const available = concretePermissions.value.filter((permission) => permission.enabled)
+  const available = concretePermissions.value
   const selected = new Set(selectedRolePermissionIds.value)
   if (available.length > 0 && available.every((permission) => selected.has(permission.id))) {
     return ['*:*:*']
@@ -624,7 +620,7 @@ onMounted(async () => {
                             v-model="selectedRolePermissionIds"
                             type="checkbox"
                             :value="permission.id"
-                            :disabled="!canUpdateRoles || !permission.enabled"
+                            :disabled="!canUpdateRoles"
                           />
                           <span>{{ permission.key }}</span>
                         </label>
@@ -702,7 +698,7 @@ onMounted(async () => {
                     v-model="user.roleIds"
                     type="checkbox"
                     :value="role.id"
-                    :disabled="!canUpdateUsers || !user.enabled || !role.enabled"
+                    :disabled="!canUpdateUsers || !user.enabled"
                   />
                   <span>{{ role.code }}</span>
                 </label>

@@ -1,14 +1,25 @@
+/**
+ * 权限目录里的一条。
+ *
+ * 没有 `enabled` —— `sys_permission.status` 已删除。权限是否生效完全由**角色授权**决定：
+ * 没被任何角色勾选就等于没人拥有。前端也不该再照着某个「权限被停用」的状态写判断。
+ */
 export interface BackendPermission {
   id: string
   name: string
   permission: string
-  enabled: boolean
   backendRequired: boolean
   lastSeenTime: string | null
 }
 
 export type MenuType = 'CATALOG' | 'MENU'
 
+/**
+ * 菜单树里的一条。
+ *
+ * 没有 `enabled` —— `sys_menu.status` 已删除。侧边栏可见性只由 `visible` 一个字段决定：
+ * 它是显式声明的「隐藏但保留」，和「删除」不是一回事。
+ */
 export interface MenuItem {
   id: string
   parentId: string
@@ -22,7 +33,6 @@ export interface MenuItem {
   sort: number
   visible: boolean
   keepAlive: boolean
-  enabled: boolean
   remark: string | null
 }
 
@@ -59,11 +69,17 @@ export interface RoleRelation {
   menuIds: string[]
 }
 
+/**
+ * 角色列表里的一行。
+ *
+ * 没有 `enabled` —— `sys_role.status` 已删除。角色是一组权限的集合，不想让人用就把它从用户
+ * 身上摘掉；留一个「停用但还绑着用户」的中间态只会让「这个角色的权限到底算不算数」变成
+ * 一个每次都要重新确认的问题。
+ */
 export interface RoleSummary {
   id: string
   code: string
   name: string
-  enabled: boolean
 }
 
 export interface RolePermissionRelation extends RoleSummary {
@@ -74,6 +90,12 @@ export interface RoleMenuRelation extends RoleSummary {
   menuIds: string[]
 }
 
+/**
+ * 用户角色表里的一行。
+ *
+ * `enabled` 在这里**保留**，因为它来自 `sys_user.status` —— 全库唯一留下的状态列。
+ * 它是账号开关（封号 / 解封），不是记录有效性。
+ */
 export interface UserRoleRelation {
   id: string
   email: string
