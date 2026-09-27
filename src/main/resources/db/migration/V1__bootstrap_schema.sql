@@ -19,16 +19,18 @@
 -- 用户 / 角色 / 权限
 -- ---------------------------------------------------------------------------
 
+-- status 是**全库唯一**保留的状态列：它是账号级开关（封号 / 解封），
+-- 语义不是「这条记录还算不算数」，而是「这个人还能不能用」。
+-- 其余表的 status 已全部删除，见文件末尾「为什么没有 deleted，也没有 status」。
 CREATE TABLE sys_user (
     id              BIGINT       NOT NULL COMMENT '用户 ID（雪花）',
     password        VARCHAR(255) NOT NULL COMMENT '密码哈希（BCrypt）',
     email           VARCHAR(128) NOT NULL COMMENT '邮箱（登录 / 找回密码 / 验证码）',
     phone           VARCHAR(32)  NULL,
-    status          TINYINT      NOT NULL DEFAULT 1 COMMENT '1=正常 0=停用',
+    status          TINYINT      NOT NULL DEFAULT 1 COMMENT '1=正常 0=停用（封号）',
     last_login_time DATETIME     NULL,
     last_login_ip   VARCHAR(64)  NULL,
     remark          VARCHAR(255) NULL,
-    deleted         TINYINT      NOT NULL DEFAULT 0,
     create_by       BIGINT       NULL,
     create_time     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_by       BIGINT       NULL,
@@ -38,15 +40,16 @@ CREATE TABLE sys_user (
     KEY idx_user_status (status)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '用户表';
 
+-- 没有 status：停用一个角色和「删除它」没有区别 —— 它本来就是一组权限的集合，
+-- 不想让人用就把它从用户身上摘掉。留着 status 只会多出一个「已停用但还绑着一堆用户」的
+-- 中间态，而那个状态下权限到底算不算数，谁都得再想一遍。
 CREATE TABLE sys_role (
     id          BIGINT       NOT NULL,
     code        VARCHAR(64)  NOT NULL,
     name        VARCHAR(64)  NOT NULL,
     sort        INT          NOT NULL DEFAULT 0,
-    status      TINYINT      NOT NULL DEFAULT 1,
     builtin     TINYINT      NOT NULL DEFAULT 0,
     remark      VARCHAR(255) NULL,
-    deleted     TINYINT      NOT NULL DEFAULT 0,
     create_by   BIGINT       NULL,
     create_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_by   BIGINT       NULL,
@@ -56,30 +59,33 @@ CREATE TABLE sys_role (
     KEY idx_role_sort (sort)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '角色表';
 
+-- 没有 status：权限的「启用 / 停用」是**授权**问题，不是权限定义自己的属性。
+-- 想让某个权限暂时不生效，应该去角色授权里取消勾选，而不是把目录里的定义停用 ——
+-- 后者会让所有角色（包括持有 *:*:* 的站长）一起失灵，是全局性的副作用。
 CREATE TABLE sys_permission (
     id               BIGINT       NOT NULL COMMENT '权限 ID（雪花）',
     name             VARCHAR(128) NOT NULL COMMENT '权限名称',
     type             VARCHAR(16)  NOT NULL DEFAULT 'API' COMMENT 'API / BUTTON / DATA',
     perm             VARCHAR(128) NOT NULL COMMENT '权限串，三段式 glob',
-    status           TINYINT      NOT NULL DEFAULT 1 COMMENT '1=启用 0=停用',
     backend_required TINYINT      NOT NULL DEFAULT 0 COMMENT '是否由后端代码声明',
     last_seen_time   DATETIME     NULL COMMENT '最近一次被后端扫描到的时间',
     remark           VARCHAR(255) NULL,
-    deleted          TINYINT      NOT NULL DEFAULT 0,
     create_by        BIGINT       NULL,
     create_time      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_by        BIGINT       NULL,
     update_time      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uk_permission_perm (perm),
-    KEY idx_permission_type (type),
-    KEY idx_permission_status (status)
+    KEY idx_permission_type (type)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '权限定义表';
 
 -- ---------------------------------------------------------------------------
 -- 菜单
 -- ---------------------------------------------------------------------------
 
+-- 没有 status：菜单的「停用」和「删除」在结果上是同一件事（侧边栏不出现、路由进不去），
+-- 于是它只多提供了一个「藏起来但还能被角色勾选」的中间态。
+-- 不想让人看见就把 visible 关掉（明确表达「隐藏」），不想让它存在就删掉。
 CREATE TABLE sys_menu (
     id            BIGINT       NOT NULL COMMENT '菜单 ID（雪花）',
     parent_id     BIGINT       NOT NULL DEFAULT 0 COMMENT '父菜单 ID，0=顶级',
@@ -93,9 +99,7 @@ CREATE TABLE sys_menu (
     sort          INT          NOT NULL DEFAULT 0,
     visible       TINYINT      NOT NULL DEFAULT 1 COMMENT '1=显示 0=隐藏',
     keep_alive    TINYINT      NOT NULL DEFAULT 0,
-    status        TINYINT      NOT NULL DEFAULT 1 COMMENT '1=启用 0=停用',
     remark        VARCHAR(255) NULL,
-    deleted       TINYINT      NOT NULL DEFAULT 0,
     create_by     BIGINT       NULL,
     create_time   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_by     BIGINT       NULL,
@@ -105,7 +109,6 @@ CREATE TABLE sys_menu (
     KEY idx_menu_parent (parent_id),
     KEY idx_menu_sort (sort)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '菜单树表';
-
 -- ---------------------------------------------------------------------------
 -- 关系表
 -- ---------------------------------------------------------------------------
@@ -179,7 +182,6 @@ CREATE TABLE ws_connection (
     owner_user_id   BIGINT       NULL,
     enabled         TINYINT      NOT NULL DEFAULT 1,
     remark          VARCHAR(255) NULL,
-    deleted         TINYINT      NOT NULL DEFAULT 0,
     create_by       BIGINT       NULL,
     create_time     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_by       BIGINT       NULL,
@@ -229,29 +231,29 @@ INSERT INTO sys_user (id, password, email, status, remark) VALUES
 -- 角色与权限
 -- ---------------------------------------------------------------------------
 
-INSERT INTO sys_role (id, code, name, sort, status, builtin, remark) VALUES
-    (1, 'USER', '用户', 30, 1, 1, '默认角色'),
-    (2, 'ADMIN', '管理员', 20, 1, 1, '日常运营管理'),
-    (3, 'OWNER', '站长', 10, 1, 1, '最高权限');
+INSERT INTO sys_role (id, code, name, sort, builtin, remark) VALUES
+    (1, 'USER', '用户', 30, 1, '默认角色'),
+    (2, 'ADMIN', '管理员', 20, 1, '日常运营管理'),
+    (3, 'OWNER', '站长', 10, 1, '最高权限');
 
 -- 权限目录。后端启动时会扫描 @PreAuthorize 并补齐缺失项，这里列出的只是**入口权限**：
 -- 名字与分组是给人看的，写在这里免得第一次启动时权限页一片空白。
 -- 注意：扫描的 upsert 会把 name 重置成权限串本身，所以这些中文名在启动后会被覆盖 ——
 -- 这是已知偏差，见《菜单与权限当前实现.md》。
-INSERT INTO sys_permission (id, name, type, perm, status, backend_required, remark) VALUES
-    (1, '超级权限', 'API', '*:*:*', 1, 0, '三段式 glob 通配全部权限，仅授予站长'),
-    (2, '查看权限目录', 'API', 'system:permission:list', 1, 1, '权限管理入口'),
-    (3, '更新权限状态', 'API', 'system:permission:update', 1, 1, '权限管理入口'),
-    (4, '查看菜单', 'API', 'system:menu:list', 1, 1, '菜单管理入口'),
-    (5, '创建菜单', 'API', 'system:menu:create', 1, 1, '菜单管理入口'),
-    (6, '更新菜单', 'API', 'system:menu:update', 1, 1, '菜单管理入口'),
-    (7, '删除菜单', 'API', 'system:menu:delete', 1, 1, '菜单管理入口'),
-    (8, '查看用户角色', 'API', 'system:user:list', 1, 1, '权限关系管理'),
-    (9, '更新用户角色', 'API', 'system:user:update', 1, 1, '权限关系管理'),
-    (10, '查看角色授权', 'API', 'system:role:list', 1, 1, '权限关系管理'),
-    (11, '更新角色授权', 'API', 'system:role:update', 1, 1, '权限关系管理'),
-    (12, '查看系统配置', 'API', 'system:config:list', 1, 1, '系统配置入口'),
-    (13, '更新系统配置', 'API', 'system:config:update', 1, 1, '系统配置入口');
+INSERT INTO sys_permission (id, name, type, perm, backend_required, remark) VALUES
+    (1, '超级权限', 'API', '*:*:*', 0, '三段式 glob 通配全部权限，仅授予站长'),
+    (2, '查看权限目录', 'API', 'system:permission:list', 1, '权限管理入口'),
+    (3, '删除权限定义', 'API', 'system:permission:update', 1, '权限管理入口'),
+    (4, '查看菜单', 'API', 'system:menu:list', 1, '菜单管理入口'),
+    (5, '创建菜单', 'API', 'system:menu:create', 1, '菜单管理入口'),
+    (6, '更新菜单', 'API', 'system:menu:update', 1, '菜单管理入口'),
+    (7, '删除菜单', 'API', 'system:menu:delete', 1, '菜单管理入口'),
+    (8, '查看用户角色', 'API', 'system:user:list', 1, '权限关系管理'),
+    (9, '更新用户角色', 'API', 'system:user:update', 1, '权限关系管理'),
+    (10, '查看角色授权', 'API', 'system:role:list', 1, '权限关系管理'),
+    (11, '更新角色授权', 'API', 'system:role:update', 1, '权限关系管理'),
+    (12, '查看系统配置', 'API', 'system:config:list', 1, '系统配置入口'),
+    (13, '更新系统配置', 'API', 'system:config:update', 1, '系统配置入口');
 
 -- 站长只绑这一行超级权限，以后新增权限点自动拥有
 INSERT INTO sys_role_permission (role_id, permission_id) VALUES (3, 1);
@@ -269,16 +271,16 @@ INSERT INTO sys_user_role (user_id, role_id) VALUES (1, 3);
 
 INSERT INTO sys_menu
     (id, parent_id, type, name, route_name, path, component_key, icon_key, redirect,
-     sort, visible, keep_alive, status, remark)
+     sort, visible, keep_alive, remark)
 VALUES
     (1000, 0,    'CATALOG', '系统管理', NULL, NULL, NULL, 'settings', NULL,
-     10, 1, 0, 1, '系统级配置与权限管理'),
+     10, 1, 0, '系统级配置与权限管理'),
     (1001, 1000, 'MENU', '权限管理', 'system-permissions', '/system/permissions',
-     'system.permissions', 'shield', NULL, 10, 1, 0, 1, '用户、角色与权限关系管理'),
+     'system.permissions', 'shield', NULL, 10, 1, 0, '用户、角色与权限关系管理'),
     (1002, 1000, 'MENU', '菜单管理', 'system-menus', '/system/menus',
-     'system.menus', 'layout', NULL, 20, 1, 0, 1, '菜单树管理'),
+     'system.menus', 'layout', NULL, 20, 1, 0, '菜单树管理'),
     (1003, 1000, 'MENU', '系统配置', 'system-config', '/system/config',
-     'system.config', 'sliders', NULL, 30, 1, 0, 1, '注册、登录、验证码等系统开关');
+     'system.config', 'sliders', NULL, 30, 1, 0, '注册、登录、验证码等系统开关');
 
 -- 站长要能看到**目录本身**：navigation() 只纳入「父节点也可见」的条目，
 -- 缺了 (3, 1000) 这一行，三个子菜单会因为父级不可见被连坐隐藏，侧边栏直接空掉。
@@ -299,3 +301,57 @@ INSERT INTO sys_config (id, config_key, config_value, config_group, name, descri
      '注册和找回密码验证码的总开关', 1),
     (4, 'auth.password-reset.enabled', '{"enabled": true}', 'AUTH', '允许找回密码',
      '关闭后拒绝发送找回密码验证码和重置密码', 1);
+
+
+-- ============================================================================
+-- 为什么没有 deleted，也没有 status
+-- ============================================================================
+--
+-- 两条都取消了：**删除就是真删**（DELETE 语句），**状态列只保留 sys_user.status**。
+--
+-- 【一】取消逻辑删除
+--
+-- 逻辑删除（deleted = 1 + 所有查询自动加 deleted = 0）在开发期是纯负债：
+--
+--   · 每一条查询都得记得「未删除」这个条件。漏了不会报错，只会多出几条幽灵数据 ——
+--     这是最容易漏、也最难发现的一类 bug。
+--   · 唯一索引和它打架。sys_user.email、sys_menu.route_name、ws_connection.name
+--     都是唯一键，删掉的行还占着值，于是「删了却建不回来」。想绕开就得把唯一键
+--     改成 (col, deleted) 联合索引，而那又要求删除时写进一个「每次都不一样的 deleted」——
+--     D36 就是这么踩进去的，测试清理堆了 81 行永久残留。
+--   · 项目自身的操作路径本来也没有「回收站」：菜单删了就是删了，没有恢复入口。
+--     于是逻辑删除唯一兑现出来的东西，就是上面两条代价。
+--
+-- 真删除之后，「未删除」这个条件从所有 SQL 里消失，唯一索引恢复成普通的唯一约束。
+-- 代价是删不回来 —— 这在当前阶段是可接受的，早期库本来每次启动都会重建。
+--
+-- 【二】status 只留 sys_user
+--
+-- sys_user.status 和其余几张表的 status 不是一回事：
+--
+--   · sys_user.status 是**账号开关**（封号 / 解封）。它不表示「这行记录还算不算数」，
+--     表示「这个人还能不能用」。用户已经产生的数据（角色绑定、审计字段）必须留着，
+--     所以不能靠删行表达。
+--   · sys_menu / sys_permission / sys_role 的 status 是**配置开关**，而配置项的
+--     「关掉」和「删掉」在结果上没有任何区别 —— 侧边栏同样不出现、接口同样 403。
+--     多一个 status 只多出一个中间态，以及一个必须到处补的过滤条件。
+--
+-- 于是：菜单不想显示 → 用 visible=0（语义明确）；不想存在 → 删掉。
+-- 权限想收回 → 在角色授权里取消勾选；不想存在 → 删掉。
+-- 角色不想用 → 把用户从角色里摘掉；不想存在 → 删掉。
+--
+-- 【三】真删除之后，级联删除必须在同一个事务里手工做
+--
+-- 没有外键，所以数据库不会替我们清关联表。删除一个主体时必须显式清掉指向它的关系行，
+-- 否则留下的是**孤儿关系行**：菜单已经不存在，但 sys_role_menu 里还挂着一行，
+-- 下次做「角色菜单」查询时会 join 出空结果，前端表现为「勾选的菜单莫名其妙少了」。
+--
+-- 落点全部在 Service 的同一个 @Transactional 方法里：
+--
+--   sys_role          → sys_role_permission、sys_role_menu、sys_user_role
+--   sys_permission    → sys_role_permission
+--   sys_menu          → sys_role_menu（且必须先确认没有子菜单）
+--   ws_connection     → 无关联表，但要先停运行时再删
+--
+-- 唯一不做删除的用户：sys_user 目前没有删除入口（只有封号）。将来若要做注销，
+-- 同样要在这里补上 sys_user_role 的清理。

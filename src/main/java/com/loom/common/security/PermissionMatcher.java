@@ -42,13 +42,25 @@ public class PermissionMatcher {
         this.catalogService = catalogService;
     }
 
-    /** 当前认证是否拥有所要求的具体权限。 */
+    /**
+     * 当前认证是否拥有所要求的具体权限。
+     *
+     * <h2>这里原来还有第四道关，已经删掉</h2>
+     *
+     * <p>原来是 {@code catalogService.isEnabledRequirement(requiredPermission)} —— 「这个权限点必须在
+     * 权限目录里处于启用状态，glob 授权才算数」。它随 {@code sys_permission.status} 一起删除了， 理由见 {@code
+     * V1__bootstrap_schema.sql} 末尾：权限「暂时不生效」是**授权**问题， 落点是角色授权里的勾选，不是挂在权限定义上的开关。
+     *
+     * <p>删掉它<b>不是放宽了校验</b>，而是去掉了一个**现在必然成立**的条件：既然目录里不存在 「已停用的权限」，那「存在即有效」就是一条恒真的判断。留着它反而有害 ——
+     * 它会让人以为权限还有一条启停暗道，也会在下一次改动里变成一个说不清为什么存在的分支。
+     *
+     * <p>真正的边界仍然在：{@code isConcreteRequirement} 保证接口声明的权限串格式合法， 下面的逐条 glob 匹配保证调用者确实持有它。
+     */
     public boolean has(Authentication authentication, String requiredPermission) {
         if (!isConcreteRequirement(requiredPermission)
                 || authentication == null
                 || !authentication.isAuthenticated()
-                || authentication.getAuthorities() == null
-                || !catalogService.isEnabledRequirement(requiredPermission)) {
+                || authentication.getAuthorities() == null) {
             return false;
         }
 

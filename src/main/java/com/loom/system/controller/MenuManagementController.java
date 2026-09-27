@@ -5,7 +5,6 @@ import com.loom.common.security.CurrentUser;
 import com.loom.system.dto.MenuResponse;
 import com.loom.system.dto.MenuSaveRequest;
 import com.loom.system.dto.MenuSortRequest;
-import com.loom.system.dto.MenuStatusUpdateRequest;
 import com.loom.system.service.MenuService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -76,14 +75,6 @@ public class MenuManagementController {
     @PreAuthorize("@permission.has(authentication, 'system:menu:delete')")
     public Result<Void> delete(@PathVariable long id) {
         menuService.delete(id);
-        return Result.success();
-    }
-
-    @PutMapping("/{id}/status")
-    @PreAuthorize("@permission.has(authentication, 'system:menu:update')")
-    public Result<Void> updateStatus(
-            @PathVariable long id, @Valid @RequestBody MenuStatusUpdateRequest request) {
-        menuService.setEnabled(id, request.enabled());
         return Result.success();
     }
 }

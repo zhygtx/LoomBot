@@ -1,7 +1,6 @@
 package com.loom.connection.domain;
 
 import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 import lombok.Getter;
@@ -39,6 +38,15 @@ import lombok.ToString;
  *
  * <p>用 {@code @Getter/@Setter} 之后剩下的每一行都是**有意义**的：字段名、类型、注释。 {@code @ToString} 的 {@code exclude}
  * 是必须的 —— 见下方说明。
+ *
+ * <h2>没有 {@code deleted}：删除就是真删</h2>
+ *
+ * <p>逻辑删除要求每条查询都记得加「未删除」，漏了不报错；而且它和 {@code uk_connection_owner_name} / {@code
+ * uk_connection_endpoint} 打架 —— 删掉的连接还占着名字和接入路径，于是「删了却建不回来」。 理由完整版见 {@code
+ * V1__bootstrap_schema.sql} 末尾。运行时侧的对应处理是：真删之后 {@code ConnectionManager.forget(id)} 必须把内存里的 runtime
+ * 和端点一起摘掉，否则会留下一条 「库里没有、内存里还在跑」的连接。
+ *
+ * <p>注意 {@code enabled} <b>保留</b>：它不是「这行记录还算不算数」，而是「这条连接现在跑不跑」， 是人的意图，和运行时状态机是两件事。
  */
 @TableName("ws_connection")
 @Getter
@@ -68,8 +76,6 @@ public class WsConnection {
     private Integer enabled;
 
     private String remark;
-
-    @TableLogic private Integer deleted;
 
     private Long createBy;
 

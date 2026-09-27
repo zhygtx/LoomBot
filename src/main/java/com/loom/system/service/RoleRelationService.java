@@ -44,7 +44,6 @@ public class RoleRelationService {
                                         role.id(),
                                         role.code(),
                                         role.name(),
-                                        role.enabled(),
                                         permissionIds.getOrDefault(role.id(), List.of()),
                                         menuIds.getOrDefault(role.id(), List.of())))
                 .toList();
@@ -76,7 +75,6 @@ public class RoleRelationService {
                                         role.id(),
                                         role.code(),
                                         role.name(),
-                                        role.enabled(),
                                         permissionIds.getOrDefault(role.id(), List.of())))
                 .toList();
     }
@@ -90,7 +88,6 @@ public class RoleRelationService {
                                         role.id(),
                                         role.code(),
                                         role.name(),
-                                        role.enabled(),
                                         menuIds.getOrDefault(role.id(), List.of())))
                 .toList();
     }
@@ -138,6 +135,10 @@ public class RoleRelationService {
      * <p>管理页上启停勾选框和角色是同一行的两列，用户点一次保存只该产生一次网络请求；更要紧的是不能出现 「角色改成功了、启停失败」这种半成品状态 ——
      * 那会让界面显示的东西和库里的不一致，而下次刷新就变成了 一个说不清的现象。
      *
+     * <p>这里的 {@code enabled} 是 {@code sys_user.status}，也就是**封号开关**。它是全库唯一 保留的状态列 ——
+     * 其他几张表的启停都随各自的状态列一起删掉了（见 {@code V1__bootstrap_schema.sql} 末尾）。
+     * 所以这个批量接口保留原样是刻意的，它处理的本来就不是「配置启停」那件事。
+     *
      * <p>循环里逐条调用 {@link #updateUserRoles}。它是 {@code @Transactional} 的同类调用（自调用不走代理），
      * 事务由本方法这层提供，这正是我们想要的：任意一条变更失败，整批一起回滚。
      */
@@ -152,6 +153,72 @@ public class RoleRelationService {
                         throw new BusinessException(ErrorCode.BAD_REQUEST, "用户不存在");
                     }
                 });
+    }
+
+    /**
+     * 真删一个角色。
+     *
+     * <h2>为什么必须显式清三张关联表</h2>
+     *
+     * <p>没有外键，数据库不会替我们级联。漏掉任何一张的后果都不是报错，而是**孤儿关系行**： {@code sys_user_role} 里留着指向已删角色的行，算权限时 join
+     * 出空结果 —— 用户会表现为 「我的权限莫名其妙少了一块」，而库里没有任何一行看起来是错的。
+     *
+     * <h2>两条守卫，保护的是两件不同的事</h2>
+     *
+     * <p><b>内置角色不许删</b>（{@code builtin = 1}）：{@code USER} / {@code ADMIN} / {@code OWNER}
+     * 是代码和种子数据都依赖的锚点 —— 注册时按 {@code OWNER} 绑默认角色、{@code protectOwnerWildcard} 按 code
+     * 找站长。删掉它们不会立刻报错，而是让这些路径在**下一次**运行时找不到锚点。
+     *
+     * <p><b>仍有启用用户的角色不许删</b>：这条守卫原来挂在「停用角色」上（防止把一个还有人在用的角色 停掉），角色状态列删掉之后它平移到了删除上，保护的是同一件事 ——
+     * 不要让一次删除把别人正在用的 权限悄无声息地抽走。
+     *
+     * <p>判据用**启用**用户数（{@code countEnabledUsersWithRole}）而不是绑定数：停用用户虽然还挂在
+     * 角色上，但他已经登不进来，不该被算作「这个角色还有人在用」。
+     *
+     * <h2>为什么这里不清授权缓存</h2>
+     *
+     * <p>被影响的人已经在上面的守卫里排除了足够多，剩下的只有停用用户 —— 他们登不进来， 缓存会在 TTL 内自然过期。这和 {@link #deletePermission}
+     * 不一样：那边删的是被任意多个角色 引用的定义，无法反查受影响用户，只能全量清。
+     */
+    @Transactional
+    public void deleteRole(long roleId) {
+        requireRole(roleId);
+        if (Integer.valueOf(1).equals(mapper.selectRoleBuiltin(roleId))) {
+            throw new BusinessException(ErrorCode.BUILTIN_ROLE_READONLY);
+        }
+        if (mapper.countEnabledUsersWithRole(roleId) > 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该角色仍有启用用户，请先解除绑定");
+        }
+        mapper.clearPermissions(roleId);
+        mapper.clearMenus(roleId);
+        mapper.clearUsersOfRole(roleId);
+        if (mapper.deleteRole(roleId) != 1) {
+            throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
+        }
+    }
+
+    /**
+     * 真删一个权限定义。
+     *
+     * <p>先清 {@code sys_role_permission}：权限被删而授权行还在，会让「角色拥有的权限」在 join 时少一条而不报错。清完之后所有角色的授权里自然就没有它了。
+     */
+    @Transactional
+    public void deletePermission(long permissionId) {
+        if (mapper.permissionExists(permissionId) != 1) {
+            throw new BusinessException(ErrorCode.PERMISSION_NOT_FOUND);
+        }
+        Long wildcardId = mapper.selectWildcardPermissionId();
+        if (wildcardId != null && wildcardId.equals(permissionId)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "超级权限 *:*:* 不允许删除");
+        }
+        mapper.clearRolePermissionsByPermission(permissionId);
+        if (mapper.deletePermission(permissionId) != 1) {
+            throw new BusinessException(ErrorCode.PERMISSION_NOT_FOUND);
+        }
+        // 删的是一条**定义**，它可能被任意多个角色引用，而这里只清了关联行、没记下被影响了谁。
+        // 逐个反查受影响用户要先把关联关系读出来，而这张表本来就不大 —— 全量清一遍更简单，
+        // 也不会漏（漏掉的后果是「删了权限却还能调接口」，直到 TTL 到期）。
+        userService.evictAllAuthorizationCaches();
     }
 
     /**
@@ -252,6 +319,11 @@ public class RoleRelationService {
         return result;
     }
 
+    /**
+     * 拦住「摘掉最后一名站长的角色」。
+     *
+     * <p>这不是防呆，而是防自锁：最后一个站长一旦失去 {@code OWNER}，他自己的权限当场失效， 而「重新授权」这个动作又只有站长做得了 —— 界面上再也点不回去，只能改库。
+     */
     private void protectLastOwner(long userId, List<Long> ids) {
         Long ownerRoleId = mapper.selectOwnerRoleId();
         if (ownerRoleId == null

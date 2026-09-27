@@ -1,7 +1,6 @@
 package com.loom.auth.domain;
 
 import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 import lombok.Getter;
@@ -20,6 +19,12 @@ import lombok.ToString;
  * <h2>{@code @ToString(exclude = "password")} 是安全要求</h2>
  *
  * <p>与 {@code WsConnection.config} 同理：密码哈希进日志是**永久性**泄漏，日志比数据库 更容易被翻到。区别是密码哈希还能被离线爆破，而它本来只该存在于数据库里。
+ *
+ * <h2>{@code status} 是全库唯一保留的状态列</h2>
+ *
+ * <p>菜单 / 权限 / 角色的 {@code status} 都已删除（见 {@code V1__bootstrap_schema.sql} 末尾）。
+ * 唯独用户这个保留：它是<b>账号开关</b>（封号 / 解封），不表示「这行记录还算不算数」， 而是「这个人还能不能用」。用户留下的数据（角色绑定、审计字段）必须还在，
+ * 所以这件事没法用「删掉这一行」表达。
  */
 @TableName("sys_user")
 @Getter
@@ -43,7 +48,7 @@ public class SysUser {
 
     private String phone;
 
-    /** 1=正常 0=停用。 */
+    /** 1=正常 0=停用（封号）。全库唯一保留的状态列。 */
     private Integer status;
 
     private LocalDateTime lastLoginTime;
@@ -51,8 +56,6 @@ public class SysUser {
     private String lastLoginIp;
 
     private String remark;
-
-    @TableLogic private Integer deleted;
 
     private Long createBy;
 

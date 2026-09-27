@@ -3,7 +3,6 @@ package com.loom.system.controller;
 import com.loom.common.api.Result;
 import com.loom.system.dto.AuthOptionsResponse;
 import com.loom.system.dto.BackendPermissionResponse;
-import com.loom.system.dto.PermissionStatusUpdateRequest;
 import com.loom.system.dto.SystemConfigBatchUpdateRequest;
 import com.loom.system.dto.SystemConfigResponse;
 import com.loom.system.dto.SystemConfigUpdateRequest;
@@ -76,13 +75,5 @@ public class SystemManagementController {
     @PreAuthorize("@permission.has(authentication, 'system:role:list')")
     public Result<List<BackendPermissionResponse>> permissions() {
         return Result.success(permissionCatalogService.listAll());
-    }
-
-    @PutMapping("/permissions/{id}/status")
-    @PreAuthorize("@permission.has(authentication, 'system:permission:update')")
-    public Result<Void> updatePermissionStatus(
-            @PathVariable long id, @Valid @RequestBody PermissionStatusUpdateRequest request) {
-        permissionCatalogService.setEnabled(id, request.enabled());
-        return Result.success();
     }
 }

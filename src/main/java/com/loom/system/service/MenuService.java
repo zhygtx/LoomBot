@@ -10,6 +10,7 @@ import com.loom.system.dto.MenuResponse;
 import com.loom.system.dto.MenuSaveRequest;
 import com.loom.system.dto.MenuSortGroup;
 import com.loom.system.mapper.MenuMapper;
+import com.loom.system.mapper.RoleRelationMapper;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -31,10 +32,12 @@ public class MenuService {
     private static final int SORT_STEP = 10;
 
     private final MenuMapper mapper;
+    private final RoleRelationMapper relations;
     private final UserService userService;
 
-    public MenuService(MenuMapper mapper, UserService userService) {
+    public MenuService(MenuMapper mapper, RoleRelationMapper relations, UserService userService) {
         this.mapper = mapper;
+        this.relations = relations;
         this.userService = userService;
     }
 
@@ -50,6 +53,18 @@ public class MenuService {
                 .toList();
     }
 
+    /**
+     * 当前用户可见的导航条目。
+     *
+     * <h2>过滤条件只剩 {@code visible}</h2>
+     *
+     * <p>原来还有一个 {@code status = 1}（菜单启停）。那一列已删除（见 {@code V1__bootstrap_schema.sql}
+     * 末尾），因为「停用一个菜单」和「删掉一个菜单」在结果上完全一样。于是这里只剩 {@code visible}： 它是**显式声明**的「隐藏但保留」，语义和删除不重叠。
+     *
+     * <h2>为什么要逐层判断父级，而不是一条 SQL 查完</h2>
+     *
+     * <p>见下方循环的说明：只筛子级会让「父目录被隐藏、子菜单还在列表里」变成一条点不开的链接。
+     */
     public List<MenuResponse> navigation(long userId) {
         Set<Long> menuIds = userService.menuIds(userId);
         List<MenuResponse> result = new ArrayList<>();
@@ -57,7 +72,6 @@ public class MenuService {
         List<Menu> candidates =
                 mapper.selectList(
                         Wrappers.<Menu>lambdaQuery()
-                                .eq(Menu::getStatus, 1)
                                 .eq(Menu::getVisible, 1)
                                 .orderByAsc(Menu::getParentId)
                                 .orderByAsc(Menu::getSort)
@@ -113,16 +127,11 @@ public class MenuService {
         if (mapper.countChildren(id) > 0) {
             throw new BusinessException(ErrorCode.MENU_HAS_CHILDREN);
         }
+        // 真删之前先清角色菜单关联。没有外键，数据库不会级联，留着就是孤儿关系行：
+        // 菜单已经不存在，sys_role_menu 里却还挂着一行，做「角色菜单」查询时 join 出空结果，
+        // 前端表现为「勾选的菜单莫名少了一个」。
+        relations.clearRolesOfMenu(id);
         if (mapper.deleteById(id) != 1) {
-            throw new BusinessException(ErrorCode.MENU_NOT_FOUND);
-        }
-    }
-
-    @Transactional
-    public void setEnabled(long id, boolean enabled) {
-        Menu menu = require(id);
-        menu.setStatus(enabled ? 1 : 0);
-        if (mapper.updateById(menu) != 1) {
             throw new BusinessException(ErrorCode.MENU_NOT_FOUND);
         }
     }
@@ -246,9 +255,6 @@ public class MenuService {
         menu.setSort(request.sort() == null ? 0 : request.sort());
         menu.setVisible(Boolean.FALSE.equals(request.visible()) ? 0 : 1);
         menu.setKeepAlive(Boolean.TRUE.equals(request.keepAlive()) ? 1 : 0);
-        if (menu.getStatus() == null) {
-            menu.setStatus(1);
-        }
         menu.setRemark(normalize(request.remark()));
     }
 
@@ -290,7 +296,6 @@ public class MenuService {
                 menu.getSort(),
                 Integer.valueOf(1).equals(menu.getVisible()),
                 Integer.valueOf(1).equals(menu.getKeepAlive()),
-                Integer.valueOf(1).equals(menu.getStatus()),
                 menu.getRemark());
     }
 }

@@ -13,6 +13,7 @@ import com.loom.system.service.RoleRelationService;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -94,6 +95,31 @@ public class RoleRelationController {
     public Result<Void> menus(
             @PathVariable long id, @Valid @RequestBody RelationUpdateRequest request) {
         service.updateMenus(id, request.ids());
+        return Result.success();
+    }
+
+    /**
+     * 删除权限目录里的一条定义（**真删**）。
+     *
+     * <p>会连带清掉所有角色对它的授权。放在这个 Controller 而不是 {@code SystemManagementController}：
+     * 它改的是「谁拥有什么」，属于关系管理；那边只管目录的读取与配置。
+     */
+    @DeleteMapping("/permissions/{id}")
+    @PreAuthorize("@permission.has(authentication, 'system:permission:update')")
+    public Result<Void> deletePermission(@PathVariable long id) {
+        service.deletePermission(id);
+        return Result.success();
+    }
+
+    /**
+     * 删除一个角色（**真删**）。
+     *
+     * <p>会连带清掉它的权限授权、菜单授权和用户绑定。内置角色与「仍有启用用户」的角色会被拒绝。
+     */
+    @DeleteMapping("/roles/{id}")
+    @PreAuthorize("@permission.has(authentication, 'system:role:update')")
+    public Result<Void> deleteRole(@PathVariable long id) {
+        service.deleteRole(id);
         return Result.success();
     }
 }

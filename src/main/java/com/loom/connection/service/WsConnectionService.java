@@ -151,7 +151,6 @@ public class WsConnectionService {
         entity.setOwnerUserId(operatorId);
         entity.setEnabled(1);
         entity.setRemark(request.remark());
-        entity.setDeleted(0);
         entity.setCreateBy(operatorId);
         entity.setUpdateBy(operatorId);
         entity.setCreateTime(LocalDateTime.now());
@@ -232,8 +231,12 @@ public class WsConnectionService {
     @Transactional
     public void delete(long id, Long operatorId) {
         requireOwned(id, operatorId);
-        // 先提交逻辑删除，再清理运行时。事务回滚时连接仍保持在线，避免数据库里还存在、
-        // 运行时却已被永久摘掉的不一致状态。
+        // 先真删数据库行，事务提交后再清运行时。事务回滚时连接仍保持在线，
+        // 避免「数据库里还存在、运行时却已被永久摘掉」的不一致状态。
+        //
+        // 注意这里确实是物理删除（没有 deleted 列了）。所以下面的 forget 不是可选项：
+        // 少调一次就会留下一条「库里没有、内存里还在跑」的连接，它会一直占着接入路径，
+        // 而且没有任何界面能看到它。
         mapper.deleteById(id);
         afterCommit(() -> manager.forget(id));
         log.info("连接已删除: id={}", id);

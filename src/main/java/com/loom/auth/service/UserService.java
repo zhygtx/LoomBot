@@ -233,6 +233,22 @@ public class UserService {
         mapper.selectUserIdsByRole(roleId).forEach(this::evictAuthorizationCache);
     }
 
+    /**
+     * 清掉**所有**用户的授权缓存。
+     *
+     * <p>只在一种场景下用：删除一条权限**定义**。它可能被任意多个角色引用，而删除动作发生前 关联行就已经被清掉了 —— 那时再想反查「哪些用户受影响」已经查不到，只能全量清。
+     *
+     * <p>这是一条**刻意保守**的路径，代价说清楚：所有用户的授权缓存被清空，下一次请求各自回库 重新加载一次权限。项目当前是单机、用户量小，这个代价远小于「删了权限但旧缓存里还留着」——
+     * 后者表现为「接口已经没人该有权调了，却还能调通」，直到 TTL 到期为止。
+     *
+     * <p>没有做成「扫 Redis 的 perm:/role: 前缀」是因为那两个键名是本类的实现细节， 加一个 SCAN
+     * 会让别的模块也能伸手进来改缓存布局。这里显式走一遍用户表，边界更清楚。
+     */
+    public void evictAllAuthorizationCaches() {
+        mapper.selectList(Wrappers.<SysUser>lambdaQuery().select(SysUser::getId))
+                .forEach(user -> evictAuthorizationCache(user.getId()));
+    }
+
     private List<String> cached(Long userId, String keyPrefix, Supplier<List<String>> loader) {
         String key = keyPrefix + userId;
         String cached = redis.opsForValue().get(key);
