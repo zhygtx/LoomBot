@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0',
       port: 5173,
+      allowedHosts: ['dev.loombot.top', '.loombot.top'],
       watch: {
         /*
          * 忽略写入过程中的临时文件。
@@ -36,6 +37,21 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: env.VITE_DEV_API_TARGET || 'http://localhost:8080',
           changeOrigin: true,
+        },
+      },
+    },
+    preview: {
+      host: '0.0.0.0',
+      port: 4173,
+      allowedHosts: ['loombot.top', '.loombot.top'],
+      proxy: {
+        '/api': {
+          target: env.VITE_DEV_API_TARGET || 'http://localhost:8080',
+          changeOrigin: true,
+        },
+        '/ws': {
+          target: (env.VITE_DEV_API_TARGET || 'http://localhost:8080').replace(/^http/u, 'ws'),
+          ws: true,
         },
       },
     },
