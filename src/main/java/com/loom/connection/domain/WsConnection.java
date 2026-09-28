@@ -26,7 +26,7 @@ import lombok.ToString;
  * <h2>为什么 config 是 String 而不是 JsonNode</h2>
  *
  * <p>MySQL 的 {@code JSON} 列通过 JDBC 以字符串形式读写，用 {@code String} 可以直接映射， <b>不需要自定义
- * TypeHandler</b>。需要用的时候再解析（比如按 {@code secretField} 取密钥值）。
+ * TypeHandler</b>。需要用的时候再解析（比如按插件 schema 的 {@code x-secret} 字段做掩码）。
  *
  * <p><b>注意这只对持久化成立，对 API 不成立</b>：对外的 DTO 用的是 {@code JsonNode} （见 {@code
  * ConnectionCreateRequest}），因为前端按 schema 渲染出的表单值天然是对象。 转换发生在 Service 落库那一刻。
@@ -43,12 +43,12 @@ import lombok.ToString;
  *
  * <p>逻辑删除要求每条查询都记得加「未删除」，漏了不报错；而且它和 {@code uk_connection_owner_name} / {@code
  * uk_connection_endpoint} 打架 —— 删掉的连接还占着名字和接入路径，于是「删了却建不回来」。 理由完整版见 {@code
- * V1__bootstrap_schema.sql} 末尾。运行时侧的对应处理是：真删之后 {@code ConnectionManager.forget(id)} 必须把内存里的 runtime
- * 和端点一起摘掉，否则会留下一条 「库里没有、内存里还在跑」的连接。
+ * V1__bootstrap_schema.sql} 末尾。运行时侧的对应处理是：真删之后 {@code ConnectionManager.forget(id)} 必须清掉状态投影，避免留下
+ * {@code connection_definition} 中不存在的孤儿状态行。
  *
  * <p>注意 {@code enabled} <b>保留</b>：它不是「这行记录还算不算数」，而是「这条连接现在跑不跑」， 是人的意图，和运行时状态机是两件事。
  */
-@TableName("ws_connection")
+@TableName("connection_definition")
 @Getter
 @Setter
 // config 里存着 bot token。日志里出现实体是很常见的（调试、异常上下文），
@@ -60,6 +60,9 @@ public class WsConnection {
     @TableId private Long id;
 
     private String name;
+
+    /** 连接固定使用的适配器插件版本。 */
+    private Long pluginVersionId;
 
     /** 连接类型，来自适配器声明。决定方向、配置表单、路由到哪个适配器。 */
     private String connectionType;
@@ -74,6 +77,9 @@ public class WsConnection {
 
     /** 配置状态：1=启用 0=停用。这是**人的意图**，与运行时状态无关。 */
     private Integer enabled;
+
+    /** 期望状态版本。配置、启停或端点变化时递增，Adapter 用它判断是否需要重载。 */
+    private Long desiredRevision;
 
     private String remark;
 

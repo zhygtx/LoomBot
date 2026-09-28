@@ -20,12 +20,14 @@ import tools.jackson.databind.JsonNode;
  * 里做（见 {@code ConfigMasking.requireJsonObject}）。
  *
  * @param name 连接名，全局唯一
+ * @param pluginVersionId 所选适配器插件版本
  * @param connectionType 连接类型，必须能被当前在线的适配器声明
  * @param config 协议特有参数
  * @param remark 备注
  */
 public record ConnectionCreateRequest(
         @NotBlank(message = "连接名不能为空") @Size(max = 64, message = "连接名最长 64 字符") String name,
+        @NotNull(message = "适配器插件版本不能为空") Long pluginVersionId,
         @NotBlank(message = "连接类型不能为空") @Size(max = 64, message = "连接类型最长 64 字符")
                 String connectionType,
         @NotNull(message = "连接参数不能为空") JsonNode config,

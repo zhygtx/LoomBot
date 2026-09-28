@@ -170,17 +170,227 @@ CREATE TABLE sys_config (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '系统配置表';
 
 -- ---------------------------------------------------------------------------
+-- 插件注册表
+-- ---------------------------------------------------------------------------
+--
+-- 元数据同步和运行时加载是两件事：
+--   · 启动时扫描公共插件仓库，登记全部插件版本；
+--   · 连接只引用具体 plugin_version_id；
+--   · 适配器进程只为被启用连接引用的版本启动。
+--
+-- 这里没有 enabled / current_version_id / plugin_permission。
+
+CREATE TABLE plugin_repository (
+    id               BIGINT        NOT NULL,
+    repo_key         VARCHAR(64)   NOT NULL,
+    repo_url         VARCHAR(512)  NULL,
+    branch           VARCHAR(128)  NOT NULL DEFAULT 'main',
+    local_path       VARCHAR(512)  NOT NULL,
+    last_commit_hash VARCHAR(128)  NULL,
+    last_pull_time   DATETIME      NULL,
+    last_scan_time   DATETIME      NULL,
+    last_error       VARCHAR(1024) NULL,
+    create_time      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plugin_repository_key (repo_key)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '插件仓库同步状态';
+
+CREATE TABLE plugin (
+    id            BIGINT       NOT NULL,
+    repository_id BIGINT       NOT NULL,
+    plugin_key    VARCHAR(64)  NOT NULL,
+    name          VARCHAR(128) NOT NULL,
+    description   VARCHAR(512) NULL,
+    homepage      VARCHAR(512) NULL,
+    author        VARCHAR(128) NULL,
+    sort          INT          NOT NULL DEFAULT 0,
+    create_time   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plugin_key (plugin_key),
+    KEY idx_plugin_repository (repository_id),
+    KEY idx_plugin_sort (sort)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '插件稳定身份';
+
+CREATE TABLE plugin_version (
+    id                 BIGINT       NOT NULL,
+    plugin_id          BIGINT       NOT NULL,
+    version            VARCHAR(64)  NOT NULL,
+    source_commit_hash VARCHAR(128) NOT NULL,
+    manifest_json      JSON         NOT NULL,
+    manifest_sha256    CHAR(64)     NOT NULL,
+    artifact_sha256    CHAR(64)     NOT NULL,
+    install_path       VARCHAR(512) NOT NULL,
+    entry_point        VARCHAR(255) NULL,
+    python_path         VARCHAR(512) NULL,
+    runtime_key        VARCHAR(128) NOT NULL,
+    published_time     DATETIME     NULL,
+    synced_time        DATETIME     NOT NULL,
+    create_time        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plugin_version (plugin_id, version),
+    UNIQUE KEY uk_plugin_version_runtime_key (runtime_key),
+    KEY idx_plugin_version_plugin (plugin_id),
+    KEY idx_plugin_version_artifact (artifact_sha256)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '已同步的不可变插件版本';
+
+CREATE TABLE plugin_capability (
+    id                BIGINT       NOT NULL,
+    plugin_version_id BIGINT       NOT NULL,
+    capability        VARCHAR(128) NOT NULL,
+    kind              VARCHAR(32)  NOT NULL,
+    target            VARCHAR(64)  NULL,
+    detail_json       JSON         NULL,
+    create_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plugin_capability (plugin_version_id, capability),
+    KEY idx_plugin_capability_kind (kind),
+    KEY idx_plugin_capability_target (target)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '插件能力声明';
+
+CREATE TABLE plugin_connection_type (
+    id                    BIGINT       NOT NULL,
+    plugin_version_id     BIGINT       NOT NULL,
+    connection_type       VARCHAR(64)  NOT NULL,
+    entry_point           VARCHAR(255) NOT NULL DEFAULT 'main.py',
+    display_name          VARCHAR(128) NOT NULL,
+    direction             VARCHAR(16)  NOT NULL,
+    protocol_version      VARCHAR(32)  NOT NULL,
+    schema_version        VARCHAR(32)  NULL,
+    config_schema         JSON         NOT NULL,
+    config_schema_sha256  CHAR(64)     NOT NULL,
+    sort                  INT          NOT NULL DEFAULT 0,
+    create_time           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plugin_connection_type (plugin_version_id, connection_type),
+    KEY idx_plugin_connection_type_name (connection_type),
+    KEY idx_plugin_connection_direction (direction)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '插件版本声明的连接类型';
+
+CREATE TABLE plugin_node (
+    id                BIGINT       NOT NULL,
+    plugin_version_id BIGINT       NOT NULL,
+    node_key          VARCHAR(128) NOT NULL,
+    node_type         VARCHAR(16)  NOT NULL,
+    name              VARCHAR(128) NOT NULL,
+    description       VARCHAR(512) NULL,
+    input_schema      JSON         NULL,
+    output_schema     JSON         NULL,
+    source_ref        VARCHAR(255) NULL,
+    sort              INT          NOT NULL DEFAULT 0,
+    create_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plugin_node (plugin_version_id, node_key),
+    KEY idx_plugin_node_key (node_key),
+    KEY idx_plugin_node_type (node_type)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '插件版本自省出的节点目录';
+
+CREATE TABLE plugin_dependency (
+    id                BIGINT       NOT NULL,
+    plugin_version_id BIGINT       NOT NULL,
+    package_name      VARCHAR(128) NOT NULL,
+    version_spec      VARCHAR(128) NULL,
+    resolved_version  VARCHAR(64)  NULL,
+    wheel_sha256      CHAR(64)     NULL,
+    source_url        VARCHAR(512) NULL,
+    marker            VARCHAR(128) NULL,
+    create_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_plugin_dependency (plugin_version_id, package_name, marker)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '插件版本锁定依赖';
+
+-- ---------------------------------------------------------------------------
+-- 工作流定义与执行记录
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE workflow_info (
+    id                 BIGINT       NOT NULL,
+    name               VARCHAR(128) NOT NULL,
+    description        VARCHAR(512) NULL,
+    enabled            TINYINT      NOT NULL DEFAULT 1,
+    current_version_id BIGINT       NULL,
+    owner_user_id      BIGINT       NOT NULL,
+    create_by          BIGINT       NULL,
+    create_time        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_by          BIGINT       NULL,
+    update_time        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_workflow_owner_name (owner_user_id, name),
+    KEY idx_workflow_enabled (enabled)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '工作流稳定身份';
+
+CREATE TABLE workflow_version (
+    id          BIGINT       NOT NULL,
+    workflow_id BIGINT       NOT NULL,
+    version_no  INT          NOT NULL,
+    definition  JSON         NOT NULL,
+    remark      VARCHAR(512) NULL,
+    create_by   BIGINT       NULL,
+    create_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_workflow_version (workflow_id, version_no),
+    KEY idx_workflow_version_workflow (workflow_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '不可变工作流定义版本';
+
+-- 执行结果只有 SUCCESS / TIMEOUT / FAILED。
+-- 崩溃中断属于 FAILED，用 error_code=INTERRUPTED 区分，不增加第四种状态。
+CREATE TABLE workflow_execution (
+    id                       BIGINT       NOT NULL,
+    execution_id             VARCHAR(64)  NOT NULL,
+    workflow_id              BIGINT       NOT NULL,
+    definition_version       INT          NOT NULL,
+    connection_id            BIGINT       NOT NULL,
+    adapter_plugin_version_id BIGINT      NOT NULL,
+    connection_type          VARCHAR(64)  NOT NULL,
+    node_key                 VARCHAR(128) NOT NULL,
+    group_id                 VARCHAR(64)  NULL,
+    event_summary            VARCHAR(1024) NULL,
+    status                   VARCHAR(16)  NOT NULL,
+    error_code               VARCHAR(64)  NULL,
+    error_message            VARCHAR(2048) NULL,
+    detail_json              JSON         NULL,
+    detail_truncated         TINYINT      NOT NULL DEFAULT 0,
+    start_time               DATETIME(3)  NOT NULL,
+    end_time                 DATETIME(3)  NULL,
+    duration_ms              BIGINT       NULL,
+    created_date             DATE         NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_workflow_execution_id (execution_id),
+    KEY idx_workflow_execution_workflow_time (workflow_id, start_time),
+    KEY idx_workflow_execution_status_time (status, start_time),
+    KEY idx_workflow_execution_connection_time (connection_id, start_time),
+    KEY idx_workflow_execution_cleanup (created_date)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '工作流执行主记录';
+
+CREATE TABLE workflow_execution_daily (
+    biz_date        DATE         NOT NULL,
+    connection_id   BIGINT       NOT NULL,
+    group_id        VARCHAR(64)  NOT NULL DEFAULT '',
+    workflow_id     BIGINT       NOT NULL,
+    total_count     BIGINT       NOT NULL DEFAULT 0,
+    success_count   BIGINT       NOT NULL DEFAULT 0,
+    timeout_count   BIGINT       NOT NULL DEFAULT 0,
+    failed_count    BIGINT       NOT NULL DEFAULT 0,
+    avg_duration_ms BIGINT       NULL,
+    update_time     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (biz_date, connection_id, group_id, workflow_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '工作流执行日汇总';
+
+-- ---------------------------------------------------------------------------
 -- 连接与通知
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE ws_connection (
+CREATE TABLE connection_definition (
     id              BIGINT       NOT NULL,
     name            VARCHAR(64)  NOT NULL,
+    plugin_version_id BIGINT     NOT NULL,
     connection_type VARCHAR(64)  NOT NULL,
     config          JSON         NOT NULL,
     endpoint_path   VARCHAR(128) NULL,
     owner_user_id   BIGINT       NULL,
     enabled         TINYINT      NOT NULL DEFAULT 1,
+    desired_revision BIGINT      NOT NULL DEFAULT 1,
     remark          VARCHAR(255) NULL,
     create_by       BIGINT       NULL,
     create_time     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -189,10 +399,45 @@ CREATE TABLE ws_connection (
     PRIMARY KEY (id),
     UNIQUE KEY uk_connection_owner_name (owner_user_id, name),
     UNIQUE KEY uk_connection_endpoint (endpoint_path),
+    KEY idx_connection_plugin_version (plugin_version_id),
     KEY idx_connection_type (connection_type),
     KEY idx_connection_owner (owner_user_id),
     KEY idx_connection_enabled (enabled)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '通用 WS 连接定义';
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '连接定义与期望状态';
+
+-- Adapter 实际状态的只读投影。真相仍由 Python Adapter 运行时持有，Java 定时批量拉取后写入这里；
+-- API 和前端只读这份快照，不再在用户请求线程里访问 Adapter。
+CREATE TABLE connection_observation (
+    connection_id       BIGINT        NOT NULL,
+    instance_id         VARCHAR(64)   NULL,
+    state               VARCHAR(32)   NOT NULL DEFAULT 'PENDING',
+    runtime_reachable   TINYINT       NOT NULL DEFAULT 0,
+    failure_reason      VARCHAR(1024) NULL,
+    observed_revision   BIGINT        NULL,
+    last_frame_at       BIGINT        NOT NULL DEFAULT 0,
+    last_synced_at      DATETIME(6)   NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (connection_id),
+    KEY idx_connection_runtime_state (state),
+    KEY idx_connection_runtime_synced (last_synced_at)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '连接运行状态观测投影';
+
+CREATE TABLE runtime_command_outbox (
+    id                  BIGINT        NOT NULL,
+    connection_id       BIGINT        NOT NULL,
+    desired_revision    BIGINT        NOT NULL,
+    command_kind        VARCHAR(32)   NOT NULL,
+    payload             JSON          NOT NULL,
+    status              VARCHAR(16)   NOT NULL DEFAULT 'PENDING',
+    attempt_count       INT           NOT NULL DEFAULT 0,
+    next_attempt_at     DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    last_error          VARCHAR(1024) NULL,
+    created_time        DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_time        DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_runtime_command_revision (connection_id, desired_revision, command_kind),
+    KEY idx_runtime_command_pending (status, next_attempt_at),
+    KEY idx_runtime_command_connection (connection_id, desired_revision)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '适配器期望命令投递箱';
 
 CREATE TABLE notify_log (
     id          BIGINT       NOT NULL,
@@ -280,11 +525,13 @@ VALUES
     (1002, 1000, 'MENU', '菜单管理', 'system-menus', '/system/menus',
      'system.menus', 'layout', NULL, 20, 1, 0, '菜单树管理'),
     (1003, 1000, 'MENU', '系统配置', 'system-config', '/system/config',
-     'system.config', 'sliders', NULL, 30, 1, 0, '注册、登录、验证码等系统开关');
+     'system.config', 'sliders', NULL, 30, 1, 0, '注册、登录、验证码等系统开关'),
+    (1100, 0, 'MENU', '连接测试台', 'connections', '/connections',
+     'connections.playground', 'network', NULL, 20, 1, 0, '创建插件连接并验证反向/正向适配器');
 
 -- 站长要能看到**目录本身**：navigation() 只纳入「父节点也可见」的条目，
 -- 缺了 (3, 1000) 这一行，三个子菜单会因为父级不可见被连坐隐藏，侧边栏直接空掉。
-INSERT INTO sys_role_menu (role_id, menu_id) VALUES (3, 1000), (3, 1001), (3, 1002), (3, 1003);
+INSERT INTO sys_role_menu (role_id, menu_id) VALUES (3, 1000), (3, 1001), (3, 1002), (3, 1003), (3, 1100);
 
 -- ---------------------------------------------------------------------------
 -- 系统配置
@@ -315,7 +562,7 @@ INSERT INTO sys_config (id, config_key, config_value, config_group, name, descri
 --
 --   · 每一条查询都得记得「未删除」这个条件。漏了不会报错，只会多出几条幽灵数据 ——
 --     这是最容易漏、也最难发现的一类 bug。
---   · 唯一索引和它打架。sys_user.email、sys_menu.route_name、ws_connection.name
+--   · 唯一索引和它打架。sys_user.email、sys_menu.route_name、connection_definition.name
 --     都是唯一键，删掉的行还占着值，于是「删了却建不回来」。想绕开就得把唯一键
 --     改成 (col, deleted) 联合索引，而那又要求删除时写进一个「每次都不一样的 deleted」——
 --     D36 就是这么踩进去的，测试清理堆了 81 行永久残留。
@@ -351,7 +598,7 @@ INSERT INTO sys_config (id, config_key, config_value, config_group, name, descri
 --   sys_role          → sys_role_permission、sys_role_menu、sys_user_role
 --   sys_permission    → sys_role_permission
 --   sys_menu          → sys_role_menu（且必须先确认没有子菜单）
---   ws_connection     → 无关联表，但要先停运行时再删
+--   connection_definition → connection_observation，且要先停运行时再删
 --
 -- 唯一不做删除的用户：sys_user 目前没有删除入口（只有封号）。将来若要做注销，
 -- 同样要在这里补上 sys_user_role 的清理。

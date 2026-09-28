@@ -19,8 +19,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <mybatis-plus.version>3.5.17</mybatis-plus.version>
-        <docker-java.version>3.7.1</docker-java.version>
         <jjwt.version>0.13.0</jjwt.version>
+        <tomlj.version>1.1.1</tomlj.version>
 
         <!-- 工程约束工具版本 -->
         <spotless.version>3.10.2</spotless.version>
@@ -29,30 +29,11 @@
 
     </properties>
 
-    <dependencyManagement>
-        <dependencies>
-            <!-- Docker Java BOM：统一管理 docker-java 各模块版本 -->
-            <dependency>
-                <groupId>com.github.docker-java</groupId>
-                <artifactId>docker-java-bom</artifactId>
-                <version>${docker-java.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-
     <dependencies>
         <!-- Web MVC + 内嵌 Tomcat（Boot 4 中 spring-boot-starter-web 已废弃，改用 webmvc） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
-        </dependency>
-
-        <!-- WebSocket：反向 WS 用服务端，正向 WS 用 StandardWebSocketClient，同一个 starter 全覆盖 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
 
         <!-- Spring Security：HTTP 鉴权 + WS 握手鉴权 -->
@@ -75,7 +56,7 @@
              三个 artifact 缺一不可 —— api 是编译期接口，impl 与 jackson 是运行期实现，
              jjwt 用 SPI 在运行时发现它们（只加 api 会在运行期抛 UnsupportedJwtException）。
              jackson 扩展依赖 Jackson 2，与本工程 Boot 4 的 Jackson 3 并存是有意为之，
-             理由见 environment.md 第 5 条（docker-java 同样如此）。 -->
+             jjwt 的 jackson 扩展仍是 Jackson 2，与 Boot 4 的 Jackson 3 并存是有意为之。 -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-api</artifactId>
@@ -176,15 +157,11 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Docker：core + zerodep 传输层（零外部依赖，原生支持 unix socket）
-             刻意不用聚合包 docker-java —— 它会拖进 jersey + netty 一大堆东西 -->
+        <!-- 插件元信息读取。plugin.toml 是插件契约的一部分，不靠手写字符串解析。 -->
         <dependency>
-            <groupId>com.github.docker-java</groupId>
-            <artifactId>docker-java-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.github.docker-java</groupId>
-            <artifactId>docker-java-transport-zerodep</artifactId>
+            <groupId>org.tomlj</groupId>
+            <artifactId>tomlj</artifactId>
+            <version>${tomlj.version}</version>
         </dependency>
 
     </dependencies>

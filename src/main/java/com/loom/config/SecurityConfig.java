@@ -94,7 +94,7 @@ public class SecurityConfig {
                                         .permitAll()
                                         // WebSocket 握手：鉴权由连接表里的 token 自行完成，
                                         // 不走 Spring Security 的认证链（见 docs/database.md 的
-                                        // ws_connection）
+                                        // connection_definition）
                                         .requestMatchers("/ws/**")
                                         .permitAll()
                                         .anyRequest()

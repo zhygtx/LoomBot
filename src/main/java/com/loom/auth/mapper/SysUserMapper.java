@@ -74,6 +74,14 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
     List<Long> selectUserIdsByRole(@Param("roleId") Long roleId);
 
     /**
+     * 令牌校验所需的用户状态。
+     *
+     * <p>这里刻意不取 {@code password} 和审计字段。认证过滤器每个请求都要确认账号是否仍启用， 把完整用户行读回来既浪费网络和内存，也让密码哈希无必要地经过应用层。
+     */
+    @Select("SELECT id, email, status FROM sys_user WHERE id = #{id}")
+    SysUser selectAuthenticationStateById(@Param("id") Long id);
+
+    /**
      * 按标识取角色 ID。找不到返回 {@code null}（种子数据缺失时应当报错，见调用方）。
      *
      * <p>{@code LIMIT 1} 保留着，但现在它不再是「在若干条里挑一条活着的」，而是防御 {@code uk_role_code} 被手工删掉之后出现的重复行 —— 那种情况下

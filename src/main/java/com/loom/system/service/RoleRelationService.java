@@ -28,10 +28,13 @@ public class RoleRelationService {
 
     private final RoleRelationMapper mapper;
     private final UserService userService;
+    private final NavigationCache navigationCache;
 
-    public RoleRelationService(RoleRelationMapper mapper, UserService userService) {
+    public RoleRelationService(
+            RoleRelationMapper mapper, UserService userService, NavigationCache navigationCache) {
         this.mapper = mapper;
         this.userService = userService;
+        this.navigationCache = navigationCache;
     }
 
     public List<RoleRelationResponse> roles() {
@@ -125,6 +128,7 @@ public class RoleRelationService {
         mapper.clearUserRoles(userId);
         ids.stream().distinct().forEach(id -> mapper.addUserRole(userId, id));
         userService.evictAuthorizationCache(userId);
+        navigationCache.invalidateAllAfterCommit();
     }
 
     /**
@@ -152,6 +156,7 @@ public class RoleRelationService {
                     if (mapper.updateUserStatus(update.userId(), update.enabled() ? 1 : 0) != 1) {
                         throw new BusinessException(ErrorCode.BAD_REQUEST, "用户不存在");
                     }
+                    userService.evictAuthenticationStateAfterCommit(update.userId());
                 });
     }
 
@@ -195,6 +200,7 @@ public class RoleRelationService {
         if (mapper.deleteRole(roleId) != 1) {
             throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
         }
+        navigationCache.invalidateAllAfterCommit();
     }
 
     /**
@@ -265,6 +271,7 @@ public class RoleRelationService {
         mapper.clearMenus(roleId);
         menuIds.forEach(id -> mapper.addMenu(roleId, id));
         userService.evictUsersWithRole(roleId);
+        navigationCache.invalidateAllAfterCommit();
     }
 
     private void requireUser(long userId) {

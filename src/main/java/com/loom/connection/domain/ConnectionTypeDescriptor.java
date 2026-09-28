@@ -1,35 +1,35 @@
 package com.loom.connection.domain;
 
-import com.loom.connection.handshake.HandshakeSpec;
 import java.util.List;
 import tools.jackson.databind.JsonNode;
 
 /**
- * 连接类型描述 —— 由适配器在 {@code hello} 里声明，供前端渲染配置表单。
+ * 连接类型描述 —— 来自 MySQL 中的插件注册表。
  *
- * <h2>为什么它不是持久化实体</h2>
+ * <p>这个读模型只回答“用户可以选择什么插件版本、配置哪些字段”。它不表示 Adapter 当前是否已经 加载该版本；运行时状态在连接创建后由 status 接口单独返回。这样连接测试台在
+ * Adapter 启动较慢 或临时不可用时，仍然可以先展示配置表单。
  *
- * <p>连接类型的「真相」在插件里，不在数据库里。数据库只存某条连接用了哪个类型名 （{@code
- * ws_connection.connection_type}）。所以插件卸载/升级后，库里可能存在 「当前没有适配器声明的类型」的连接 —— 这不是数据损坏，运行时状态会是 {@code
- * WAITING_ADAPTER}。
- *
- * <p>{@link #ready} 表达的就是这件事：该类型此刻是否有适配器在线。
- *
+ * @param pluginId 插件稳定身份
+ * @param pluginVersionId 具体插件版本，连接创建后不可修改
+ * @param pluginKey 插件包标识
+ * @param pluginName 插件展示名
+ * @param pluginVersion 插件 SemVer
  * @param type 类型标识，由适配器声明，创建连接时按它匹配
  * @param displayName 展示给用户的名称
  * @param direction 连接方向，决定接入地址归谁管、以及要由谁来发起
  * @param configSchema 配置表单 schema（JSON Schema + {@code x-} 扩展），Java 不解释其含义
- * @param handshakeSpec 反向连接的握手校验规格
  * @param capabilities 适配器声明的能力标记（如事件类型清单），供前端提示
  * @param adapterName 声明该类型的适配器进程名，排查时用
- * @param ready 该适配器当前是否已就绪
  */
 public record ConnectionTypeDescriptor(
+        Long pluginId,
+        Long pluginVersionId,
+        String pluginKey,
+        String pluginName,
+        String pluginVersion,
         String type,
         String displayName,
         Direction direction,
         JsonNode configSchema,
-        HandshakeSpec handshakeSpec,
         List<String> capabilities,
-        String adapterName,
-        boolean ready) {}
+        String adapterName) {}

@@ -3,8 +3,8 @@ package com.loom.connection.domain;
 /**
  * 连接方向。
  *
- * <p><b>由连接类型决定，不是用户填的</b> —— 它来自适配器 {@code hello} 的声明。 所以数据库里没有这一列，只在内存中按 {@code connectionType}
- * 查出。
+ * <p><b>由连接类型决定，不是用户填的</b> —— 它来自插件版本连接 schema 的 {@code x-direction} 声明。数据库不单独保存这一列，Java 下发 Adapter
+ * 命令时显式携带。
  */
 public enum Direction {
 

@@ -34,11 +34,17 @@ public class MenuService {
     private final MenuMapper mapper;
     private final RoleRelationMapper relations;
     private final UserService userService;
+    private final NavigationCache navigationCache;
 
-    public MenuService(MenuMapper mapper, RoleRelationMapper relations, UserService userService) {
+    public MenuService(
+            MenuMapper mapper,
+            RoleRelationMapper relations,
+            UserService userService,
+            NavigationCache navigationCache) {
         this.mapper = mapper;
         this.relations = relations;
         this.userService = userService;
+        this.navigationCache = navigationCache;
     }
 
     public List<MenuResponse> list() {
@@ -66,6 +72,10 @@ public class MenuService {
      * <p>见下方循环的说明：只筛子级会让「父目录被隐藏、子菜单还在列表里」变成一条点不开的链接。
      */
     public List<MenuResponse> navigation(long userId) {
+        return navigationCache.getOrLoad(userId, () -> loadNavigation(userId));
+    }
+
+    private List<MenuResponse> loadNavigation(long userId) {
         Set<Long> menuIds = userService.menuIds(userId);
         List<MenuResponse> result = new ArrayList<>();
         Set<Long> included = new HashSet<>();
@@ -104,6 +114,7 @@ public class MenuService {
         } catch (DuplicateKeyException e) {
             throw new BusinessException(ErrorCode.MENU_ROUTE_EXISTS);
         }
+        navigationCache.invalidateAllAfterCommit();
         return toResponse(require(menu.getId()));
     }
 
@@ -118,6 +129,7 @@ public class MenuService {
         } catch (DuplicateKeyException e) {
             throw new BusinessException(ErrorCode.MENU_ROUTE_EXISTS);
         }
+        navigationCache.invalidateAllAfterCommit();
         return toResponse(require(id));
     }
 
@@ -134,6 +146,7 @@ public class MenuService {
         if (mapper.deleteById(id) != 1) {
             throw new BusinessException(ErrorCode.MENU_NOT_FOUND);
         }
+        navigationCache.invalidateAllAfterCommit();
     }
 
     /**
@@ -215,6 +228,7 @@ public class MenuService {
                 }
             }
         }
+        navigationCache.invalidateAllAfterCommit();
     }
 
     private void apply(Menu menu, MenuSaveRequest request) {

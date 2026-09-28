@@ -1,0 +1,5 @@
+fastapi>=0.116
+uvicorn[standard]>=0.35
+websockets>=10
+redis>=5
+httpx>=0.28

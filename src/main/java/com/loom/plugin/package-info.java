@@ -4,23 +4,23 @@
  * <h2>职责</h2>
  *
  * <ul>
- *   <li><b>消费插件仓库的 {@code index.json} 清单</b>，按版本下载 zip 制品并安装
- *   <li>依赖安装：公共 wheel 缓存 + 每插件一份私有依赖目录
- *   <li>安装时启动<b>一次性自省进程</b>提取节点清单，写入数据库
- *   <li>插件的元信息管理（名称、版本、能力、依赖、所需权限）
+ *   <li><b>同步公共插件仓库</b>并读取 {@code index.json} 清单
+ *   <li>登记全部插件、全部版本、能力、连接类型、节点和依赖信息
+ *   <li>启动时先比较仓库 commit hash，未变化则跳过扫描
+ *   <li>向 runtime / connection / adapter 暴露只读的 {@code PluginCatalog}
  * </ul>
  *
- * <h2>职责边界：本模块只做「安装 + 元信息」</h2>
+ * <h2>职责边界：本模块只做「同步 + 元信息」</h2>
  *
  * <p>插件的<b>提交、审核、合并</b>由<b>独立系统</b>负责 —— 用户提交 PR，AI 自动审核并合并。
  *
- * <p>⚠️ <b>插件进程本身不由本模块托管</b>。适配器与 worker 是<b>独立容器</b>， 生命周期归容器编排（重启策略 + 健康检查）。详见 {@code
- * docs/decisions.md} 的 D45/D50。
+ * <p>⚠️ <b>插件进程本身不由本模块托管</b>。Adapter Plugin 由 {@code com.loom.adapter} 下的 Adapter Runtime
+ * 按被启用连接引用的版本启动，Worker 由后续 runtime 调度器按版本预热。
  *
- * <h2>分发形态：消费清单，不拉源码</h2>
+ * <h2>分发形态：从公共仓库同步版本目录</h2>
  *
- * <p>从公开仓库消费 {@code index.json}（含全部历史版本 + 对应 zip），<b>不是</b> {@code git pull}
- * 源码。理由：版本是<b>制品</b>而不是工作区， 因此「更新生效策略」「本地脏数据」「回滚点」这一整类问题不复存在 —— 切换版本 = 换加载路径 + 重启，回滚 = 指回旧版本目录。
+ * <p>远程配置 {@code loom.plugin.repository-url} 时，启动阶段先 fetch / pull 公共仓库； 本地开发可以只配置 {@code
+ * local-path}，直接扫描已有插件目录。版本目录一旦登记就视为不可变， 同版本内容变化必须拒绝并发布新版本。
  *
  * <p>⚠️ 但仍必须保留<b>来源可追溯</b>：清单里每个版本要带 commit hash + 审核记录引用。
  *
@@ -45,7 +45,7 @@
  *
  * <h2>边界规则</h2>
  *
- * <p>只允许依赖 {@code common} 与 {@code runtime}（基础模块）。 接收 WS 消息时依赖 {@code connection} 暴露的接口，而不是直接操作
- * {@code WebSocketSession}。
+ * <p>只允许依赖 {@code common} 与 {@code runtime}（基础模块）。Adapter Runtime 通过 {@code PluginCatalog}
+ * 读取版本元数据，不直接依赖插件实体。
  */
 package com.loom.plugin;

@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+from adapter_host.models import DesiredConnection
+from adapter_host.protocol import MAX_MESSAGE_BYTES, message, require_message
+from adapter_host.worker_runtime import WorkerRuntime
+
+logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+log = logging.getLogger("adapter-worker")
+
+
+class Worker:
+    def __init__(self, plugin_dir: Path, entry_point: str, adapter_type: str) -> None:
+        self.output_lock = asyncio.Lock()
+        self.runtime: WorkerRuntime | None = None
+        self.plugin_dir, self.entry_point, self.adapter_type = plugin_dir, entry_point, adapter_type
+        self.stop_requested = asyncio.Event()
+
+    async def send(self, value: dict[str, Any]) -> None:
+        raw = (json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+        if len(raw) > MAX_MESSAGE_BYTES:
+            raise ValueError("进程间消息超过最大帧大小")
+        async with self.output_lock:
+            sys.stdout.buffer.write(raw)
+            sys.stdout.buffer.flush()
+
+    async def run(self) -> None:
+        self.runtime = WorkerRuntime(self.plugin_dir, self.entry_point, self.adapter_type, self.send)
+        await self.send(message("ready", workerPid=os.getpid(), adapterType=self.adapter_type))
+        observation_task = asyncio.create_task(self._observation_loop())
+        try:
+            while not self.stop_requested.is_set():
+                line = await asyncio.to_thread(sys.stdin.buffer.readline)
+                if not line:
+                    return
+                if len(line) > MAX_MESSAGE_BYTES:
+                    await self.send(message("error", errorCode="IPC_FAILED", errorMessage="命令超过最大帧大小"))
+                    continue
+                try:
+                    command = require_message(json.loads(line))
+                    await self.handle(command)
+                except Exception as exc:
+                    request_id = None
+                    try:
+                        request_id = json.loads(line).get("requestId")
+                    except Exception:
+                        pass
+                    await self.send(message("reply", request_id=request_id, ok=False, errorCode="IPC_FAILED", errorMessage=str(exc)))
+        finally:
+            observation_task.cancel()
+
+    async def _observation_loop(self) -> None:
+        while True:
+            await asyncio.sleep(1)
+            if self.runtime is None:
+                continue
+            for ctx in self.runtime.connections.values():
+                ctx.observation.observed_at = int(__import__("time").time() * 1000)
+                await self.send(message("observation", **ctx.observation.as_dict()))
+
+    async def handle(self, command: dict[str, Any]) -> None:
+        assert self.runtime is not None
+        kind, request_id = command["kind"], command.get("requestId")
+        if kind == "shutdown":
+            await self.send(message("reply", request_id=request_id, ok=True))
+            self.stop_requested.set()
+            return
+        if kind == "apply":
+            observation = await self.runtime.apply(DesiredConnection.from_dict(command["desired"]))
+            await self.send(message("reply", request_id=request_id, ok=True, observation=observation.as_dict()))
+        elif kind == "remove":
+            observation = await self.runtime.remove(int(command["connectionId"]), str(command.get("reason", "删除期望")))
+            await self.send(message("reply", request_id=request_id, ok=True, observation=None if observation is None else observation.as_dict()))
+        elif kind == "status":
+            ctx = self.runtime.connections.get(int(command["connectionId"]))
+            await self.send(message("reply", request_id=request_id, ok=True, observation=None if not ctx else ctx.observation.as_dict()))
+        elif kind == "invoke":
+            result = await self.runtime.invoke(int(command["connectionId"]), str(command["action"]), dict(command.get("params") or {}))
+            await self.send(message("reply", request_id=request_id, ok=True, result=result))
+        elif kind == "session.open":
+            await self.runtime.open_session(int(command["connectionId"]), str(command["sessionId"]), dict(command.get("metadata") or {}))
+            await self.send(message("reply", request_id=request_id, ok=True))
+        elif kind == "session.frame":
+            frame = command.get("frame")
+            if isinstance(frame, dict) and frame.get("encoding") == "base64":
+                import base64
+                frame = base64.b64decode(frame["data"])
+            await self.runtime.feed_session(int(command["connectionId"]), str(command["sessionId"]), frame)
+            await self.send(message("reply", request_id=request_id, ok=True))
+        elif kind == "session.close":
+            await self.runtime.close_session(int(command["connectionId"]), str(command["sessionId"]))
+            await self.send(message("reply", request_id=request_id, ok=True))
+        else:
+            raise ValueError(f"未知工作进程命令: {kind}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--plugin-dir", required=True)
+    parser.add_argument("--entry-point", default="main.py")
+    parser.add_argument("--adapter-type", required=True)
+    args = parser.parse_args()
+    asyncio.run(Worker(Path(args.plugin_dir), args.entry_point, args.adapter_type).run())
+
+
+if __name__ == "__main__":
+    main()

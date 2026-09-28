@@ -14,8 +14,8 @@ import tools.jackson.databind.JsonNode;
  *
  * <ul>
  *   <li>{@code enabled=true} + {@code state=ONLINE} —— 正常
- *   <li>{@code enabled=true} + {@code state=RECONNECTING} —— 配错了地址或平台挂了
- *   <li>{@code enabled=true} + {@code state=WAITING_ADAPTER} —— 插件没起来
+ *   <li>{@code enabled=true} + {@code state=RETRY_WAIT} —— 平台或网络暂时不可用
+ *   <li>{@code enabled=true} + {@code state=PENDING} —— 运行时尚未接受新的期望版本
  * </ul>
  *
  * <p>如果把两者合并成一个「状态」字段，就再也表达不出「我想让它开着但现在连不上」。
@@ -23,18 +23,19 @@ import tools.jackson.databind.JsonNode;
  * @param config 密钥字段已用 {@code ********} 掩码；回传时 Service 会还原。**是 JSON 对象**， 与请求侧形状一致 —— 客户端不需要做「字符串 ↔
  *     对象」的转换
  * @param endpointPath 反向连接的接入路径，正向为 {@code null}
- * @param typeReady 该连接类型当前是否有适配器在线；{@code false} 时前端应提示「插件未就绪」
+ * @param endpointUrl 纯传输地址，不携带协议凭据；协议配置单独放在 {@code config}
  */
 public record ConnectionResponse(
         Long id,
         String name,
+        Long pluginVersionId,
         String connectionType,
         JsonNode config,
         String endpointPath,
+        String endpointUrl,
         Long ownerUserId,
         boolean enabled,
         String remark,
         LocalDateTime createTime,
         LocalDateTime updateTime,
-        boolean typeReady,
         ConnectionStatus status) {}

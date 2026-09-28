@@ -22,6 +22,8 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 用户持久化与授权加载。
@@ -64,6 +66,16 @@ public class UserService {
     private static final String KEY_PERMISSIONS = "perm:v2:user:";
 
     private static final String KEY_ROLES = "role:v2:user:";
+
+    /**
+     * 令牌校验所需的用户状态快照。
+     *
+     * <p>过滤器只关心 {@code email + enabled}，却在升级前每个请求回查一次完整的 {@code sys_user}。
+     * 这个键把高频状态读取降到用户级一次；用户停用或改密时由显式失效立即删除。
+     */
+    private static final String KEY_AUTH_STATE = "auth:state:v1:";
+
+    private static final String KEY_AUTH_STATE_VERSION = "auth:state:v1:version:user:";
 
     private static final String CACHE_SEPARATOR = ",";
 
@@ -156,6 +168,41 @@ public class UserService {
         return Optional.ofNullable(mapper.selectById(id));
     }
 
+    /** 认证过滤器使用的轻量用户状态；Redis 未命中时只查询 id/email/status。 */
+    public Optional<AuthenticationState> findAuthenticationState(Long id) {
+        if (id == null) {
+            return Optional.empty();
+        }
+        String key = null;
+        try {
+            key = authenticationStateKey(id);
+            String cached = redis.opsForValue().get(key);
+            AuthenticationState parsed = parseAuthenticationState(id, key, cached);
+            if (parsed != null) {
+                return Optional.of(parsed);
+            }
+        } catch (RuntimeException e) {
+            log.warn("读取用户认证快照失败，回退数据库: userId={}", id, e);
+        }
+
+        SysUser user = mapper.selectAuthenticationStateById(id);
+        if (user == null) {
+            return Optional.empty();
+        }
+        AuthenticationState state =
+                new AuthenticationState(user.getId(), user.getEmail(), user.enabled());
+        try {
+            redis.opsForValue()
+                    .set(
+                            key,
+                            (state.enabled() ? "1" : "0") + ":" + state.email(),
+                            properties.authenticationCacheTtl());
+        } catch (RuntimeException e) {
+            log.warn("写入用户认证快照失败: userId={}", id, e);
+        }
+        return Optional.of(state);
+    }
+
     public boolean existsByEmail(String email) {
         return mapper.exists(
                 Wrappers.<SysUser>lambdaQuery().eq(SysUser::getEmail, normalizeEmail(email)));
@@ -174,6 +221,7 @@ public class UserService {
         if (mapper.updateById(update) != 1) {
             throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
+        evictAuthenticationStateAfterCommit(userId);
         log.info("用户密码已重置: id={}", userId);
     }
 
@@ -233,6 +281,21 @@ public class UserService {
         mapper.selectUserIdsByRole(roleId).forEach(this::evictAuthorizationCache);
     }
 
+    /** 用户停用/启用后清掉认证状态快照，提交后再清以避免被并发请求回填旧值。 */
+    public void evictAuthenticationStateAfterCommit(Long userId) {
+        if (userId == null) {
+            return;
+        }
+        afterCommit(
+                () -> {
+                    try {
+                        redis.opsForValue().increment(KEY_AUTH_STATE_VERSION + userId);
+                    } catch (RuntimeException e) {
+                        log.warn("推进用户认证快照版本失败，旧快照将等 TTL 自然过期: userId={}", userId, e);
+                    }
+                });
+    }
+
     /**
      * 清掉**所有**用户的授权缓存。
      *
@@ -261,6 +324,42 @@ public class UserService {
         return loaded;
     }
 
+    private AuthenticationState parseAuthenticationState(Long userId, String key, String cached) {
+        if (cached == null) {
+            return null;
+        }
+        int separator = cached.indexOf(':');
+        if (separator != 1 || cached.length() < 2) {
+            redis.delete(key);
+            return null;
+        }
+        String marker = cached.substring(0, 1);
+        if (!"0".equals(marker) && !"1".equals(marker)) {
+            redis.delete(key);
+            return null;
+        }
+        return new AuthenticationState(userId, cached.substring(2), "1".equals(marker));
+    }
+
+    private String authenticationStateKey(Long userId) {
+        String version = redis.opsForValue().get(KEY_AUTH_STATE_VERSION + userId);
+        return KEY_AUTH_STATE + (version == null ? "0" : version) + ":user:" + userId;
+    }
+
+    private static void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            action.run();
+                        }
+                    });
+            return;
+        }
+        action.run();
+    }
+
     // ==================================================================
     // 视图映射
     // ==================================================================
@@ -280,4 +379,7 @@ public class UserService {
     public static String normalizeEmail(String email) {
         return email == null ? null : email.strip().toLowerCase(Locale.ROOT);
     }
+
+    /** 供认证层复用，不包含密码或审计信息。 */
+    public record AuthenticationState(Long id, String email, boolean enabled) {}
 }

@@ -19,6 +19,7 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -38,15 +39,15 @@ import tools.jackson.databind.ObjectMapper;
  *
  * <p>负责：数据库 CRUD、接入路径生成、{@code config} 的密钥掩码、以及**在正确的时机** 通知 {@link ConnectionManager}。
  *
- * <p>不负责：连接状态机、重连、WS 通道。那些全在 {@code ConnectionManager} 里 —— 它是运行时状态的唯一权威，本类只是它的调用方。反过来，管理器不认识 DTO、
- * 不返回实体给上层，两边靠 connectionId 打交道。
+ * <p>不负责：Adapter 连接状态机、重连和 WS 通道。控制命令由 {@link ConnectionManager} 发给 Adapter；实际状态由定时同步器投影到
+ * MySQL，本类只读取数据库快照。
  *
- * <h2>为什么创建时要求适配器在线</h2>
+ * <h2>为什么创建时要求插件版本已登记</h2>
  *
- * <p>方向（正向/反向）和 {@code config} 的字段构成**都由适配器声明**，没有适配器就不知道 该不该生成接入路径，也渲染不出配置表单。所以创建时要求类型已知。
+ * <p>方向（正向/反向）和 {@code config} 的字段构成都由插件版本声明。没有登记版本就不知道 该不该生成接入路径，也渲染不出配置表单。所以创建时要求 {@code
+ * pluginVersionId + connectionType} 已知。
  *
- * <p>注意这和「运行时要求适配器在线」是两件事：库里已存在的连接，即使适配器没起来也能加载， 状态是 {@code WAITING_ADAPTER}，适配器 {@code hello}
- * 后自动拉起。**只有新建需要适配器在场。**
+ * <p>注意这和“运行时进程已经在线”是两件事。新建只要求元数据已登记；进程按需启动， 未就绪期间状态是 {@code PENDING}。
  */
 @Service
 public class WsConnectionService {
@@ -96,8 +97,17 @@ public class WsConnectionService {
                         .eq(WsConnection::getOwnerUserId, ownerUserId)
                         .orderByDesc(WsConnection::getId);
         IPage<WsConnection> result = mapper.selectPage(page, wrapper);
+        Map<Long, ConnectionStatus> statuses = manager.statusMap(result.getRecords());
         List<ConnectionResponse> records =
-                result.getRecords().stream().map(this::toResponse).toList();
+                result.getRecords().stream()
+                        .map(
+                                entity ->
+                                        toResponse(
+                                                entity,
+                                                statuses.getOrDefault(
+                                                        entity.getId(),
+                                                        manager.status(entity.getId()))))
+                        .toList();
         return PageResult.of(records, result.getTotal(), pageNum, pageSize);
     }
 
@@ -110,7 +120,7 @@ public class WsConnectionService {
         return manager.status(id);
     }
 
-    /** 所有已知连接的运行时状态。只在内存里，未启动过的连接不会出现。 */
+    /** 所有已知连接最近一次同步到 MySQL 的运行时状态。 */
     public List<ConnectionStatus> statuses(long ownerUserId) {
         return mapper
                 .selectList(
@@ -132,24 +142,28 @@ public class WsConnectionService {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
         ConnectionTypeDescriptor descriptor =
-                manager.connectionType(request.connectionType())
+                manager.connectionType(request.pluginVersionId(), request.connectionType())
                         .orElseThrow(
                                 () ->
                                         new BusinessException(
                                                 ErrorCode.CONNECTION_TYPE_UNKNOWN,
-                                                "适配器未就绪，无法创建类型为 "
+                                                "找不到已登记的适配器版本与类型: "
+                                                        + request.pluginVersionId()
+                                                        + " / "
                                                         + request.connectionType()
-                                                        + " 的连接。请确认对应插件已加载。"));
+                                                        + "。请等待自动扫描完成或检查插件目录。"));
         String config = ConfigMasking.requireValidConfig(request.config(), descriptor);
 
         WsConnection entity = new WsConnection();
         entity.setName(request.name().trim());
+        entity.setPluginVersionId(descriptor.pluginVersionId());
         entity.setConnectionType(descriptor.type());
         entity.setConfig(config);
         entity.setEndpointPath(
                 descriptor.direction() == Direction.REVERSE ? allocateEndpointPath() : null);
         entity.setOwnerUserId(operatorId);
         entity.setEnabled(1);
+        entity.setDesiredRevision(1L);
         entity.setRemark(request.remark());
         entity.setCreateBy(operatorId);
         entity.setUpdateBy(operatorId);
@@ -191,6 +205,7 @@ public class WsConnectionService {
         // 显式给空串而不是 null：更新用的是 NOT_NULL 策略，传 null 等于「不改」，
         // 用户就永远清不掉备注
         patch.setRemark(request.remark() == null ? "" : request.remark());
+        patch.setDesiredRevision(existing.getDesiredRevision() + 1);
         patch.setUpdateBy(operatorId);
         patch.setUpdateTime(LocalDateTime.now());
         try {
@@ -209,10 +224,11 @@ public class WsConnectionService {
 
     @Transactional
     public ConnectionResponse setEnabled(long id, boolean enabled, Long operatorId) {
-        requireOwned(id, operatorId);
+        WsConnection existing = requireOwned(id, operatorId);
         WsConnection patch = new WsConnection();
         patch.setId(id);
         patch.setEnabled(enabled ? 1 : 0);
+        patch.setDesiredRevision(existing.getDesiredRevision() + 1);
         patch.setUpdateBy(operatorId);
         patch.setUpdateTime(LocalDateTime.now());
         mapper.updateById(patch);
@@ -231,12 +247,14 @@ public class WsConnectionService {
     @Transactional
     public void delete(long id, Long operatorId) {
         requireOwned(id, operatorId);
-        // 先真删数据库行，事务提交后再清运行时。事务回滚时连接仍保持在线，
-        // 避免「数据库里还存在、运行时却已被永久摘掉」的不一致状态。
+        if (!manager.stop(id)) {
+            throw new BusinessException(
+                    ErrorCode.CONNECTION_UNAVAILABLE, "Adapter 控制 API 不可达，连接未删除。恢复后再重试。");
+        }
+        // 先真删数据库行，事务提交后再清状态投影。事务回滚时连接定义和投影都还存在。
         //
         // 注意这里确实是物理删除（没有 deleted 列了）。所以下面的 forget 不是可选项：
-        // 少调一次就会留下一条「库里没有、内存里还在跑」的连接，它会一直占着接入路径，
-        // 而且没有任何界面能看到它。
+        // 少调一次就会留下孤儿状态投影。同步周期的清理是兜底，不是正常删除路径。
         mapper.deleteById(id);
         afterCommit(() -> manager.forget(id));
         log.info("连接已删除: id={}", id);
@@ -279,9 +297,10 @@ public class WsConnectionService {
                 });
     }
 
-    /** 类型的描述信息；适配器不在线时返回 {@code null}（掩码与就绪提示都据此退化）。 */
+    /** 插件注册表里的类型描述；元数据缺失时返回 {@code null}。 */
     private ConnectionTypeDescriptor descriptorOf(WsConnection entity) {
-        return manager.connectionType(entity.getConnectionType()).orElse(null);
+        return manager.connectionType(entity.getPluginVersionId(), entity.getConnectionType())
+                .orElse(null);
     }
 
     /**
@@ -309,10 +328,15 @@ public class WsConnectionService {
     }
 
     private ConnectionResponse toResponse(WsConnection entity) {
+        return toResponse(entity, manager.status(entity.getId()));
+    }
+
+    private ConnectionResponse toResponse(WsConnection entity, ConnectionStatus status) {
         ConnectionTypeDescriptor descriptor = descriptorOf(entity);
         return new ConnectionResponse(
                 entity.getId(),
                 entity.getName(),
+                entity.getPluginVersionId(),
                 entity.getConnectionType(),
                 descriptor == null
                         ? null
@@ -321,12 +345,12 @@ public class WsConnectionService {
                                 ConfigMasking.secretFields(descriptor),
                                 objectMapper),
                 entity.getEndpointPath(),
+                manager.publicEndpoint(entity.getEndpointPath()),
                 entity.getOwnerUserId(),
                 Objects.equals(entity.getEnabled(), 1),
                 entity.getRemark(),
                 entity.getCreateTime(),
                 entity.getUpdateTime(),
-                descriptor != null && descriptor.ready(),
-                manager.status(entity.getId()));
+                status);
     }
 }

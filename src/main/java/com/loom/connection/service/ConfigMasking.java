@@ -3,7 +3,6 @@ package com.loom.connection.service;
 import com.loom.common.api.ErrorCode;
 import com.loom.common.exception.BusinessException;
 import com.loom.connection.domain.ConnectionTypeDescriptor;
-import com.loom.connection.handshake.HandshakeSpec;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import tools.jackson.databind.JsonNode;
@@ -26,12 +25,7 @@ import tools.jackson.databind.node.ObjectNode;
  *
  * <h2>密钥字段从哪来</h2>
  *
- * <p>两处，取并集：
- *
- * <ul>
- *   <li>配置 schema 里标了 {@code "x-secret": true} 的字段 —— 覆盖正向连接的 token；
- *   <li>握手指定的 {@code secretField} —— 覆盖反向连接的校验密钥。
- * </ul>
+ * <p>唯一来源是插件配置 schema 里标了 {@code "x-secret": true} 的字段。传输地址和协议凭据分开表达， 掩码不再依赖握手元数据。
  *
  * <p>刻意**不引入「加密存储」**这一层：字段级加密需要密钥管理，而密钥管理没有 「简单做对」的版本（放配置文件等于没加，放环境变量等于换了个地方放明文）。
  * 这件事留到真正需要时再设计，现在只做「不主动泄漏」。
@@ -66,10 +60,6 @@ public final class ConfigMasking {
                     fields.add(name);
                 }
             }
-        }
-        HandshakeSpec spec = descriptor.handshakeSpec();
-        if (spec != null && spec.requiresSecret() && spec.secretField() != null) {
-            fields.add(spec.secretField());
         }
         return fields;
     }

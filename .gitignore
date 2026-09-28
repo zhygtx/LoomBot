@@ -41,3 +41,9 @@ build/
 /src/main/resources/application-ai.yml
 /src/main/resources/application-napcat.yml
 /tmp/
+
+### Python plugin runtime ###
+__pycache__/
+*.py[cod]
+.venv/
+/plugins/

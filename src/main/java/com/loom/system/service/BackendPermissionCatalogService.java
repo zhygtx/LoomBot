@@ -44,10 +44,17 @@ public class BackendPermissionCatalogService {
      */
     @Transactional
     public void synchronize(Set<String> permissions) {
-        permissions.stream()
-                .sorted()
-                .forEach(
-                        permission -> mapper.upsertBackendPermission(IdWorker.getId(), permission));
+        if (permissions.isEmpty()) {
+            return;
+        }
+        mapper.upsertBackendPermissions(
+                permissions.stream()
+                        .sorted()
+                        .map(
+                                permission ->
+                                        new BackendPermissionMapper.BackendPermissionSeed(
+                                                IdWorker.getId(), permission))
+                        .toList());
     }
 
     public List<BackendPermissionResponse> listRequired() {

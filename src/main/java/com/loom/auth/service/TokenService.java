@@ -146,12 +146,13 @@ public class TokenService {
             if (!String.valueOf(id).equals(claims.getSubject())) {
                 return Optional.empty();
             }
-            SysUser current = userService.findById(id).orElse(null);
+            UserService.AuthenticationState current =
+                    userService.findAuthenticationState(id).orElse(null);
             if (current == null || !current.enabled()) {
                 redis.delete(KEY_TOKEN + jti);
                 return Optional.empty();
             }
-            return Optional.of(new AuthUser(id, current.getEmail()));
+            return Optional.of(new AuthUser(id, current.email()));
         } catch (NumberFormatException e) {
             log.warn("白名单里的 userId 不是数字，令牌作废: jti={}", jti);
             return Optional.empty();

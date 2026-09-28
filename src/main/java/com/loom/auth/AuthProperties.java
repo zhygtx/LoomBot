@@ -30,6 +30,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param emailCodeCooldown 同一邮箱同一场景的重发冷却时间
  * @param emailCodeMaxAttempts 同一验证码允许的连续错误次数，超过后必须重新获取
  * @param permissionCacheTtl 授权缓存（角色 / 权限串）的有效期
+ * @param authenticationCacheTtl 每次请求校验所需用户状态快照的有效期
  * @param issuer 令牌签发方，写进 {@code iss} 声明
  */
 @ConfigurationProperties(prefix = "loom.auth")
@@ -40,6 +41,7 @@ public record AuthProperties(
         @DefaultValue("60s") Duration emailCodeCooldown,
         @DefaultValue("5") int emailCodeMaxAttempts,
         @DefaultValue("30m") Duration permissionCacheTtl,
+        @DefaultValue("5m") Duration authenticationCacheTtl,
         @DefaultValue("loom") String issuer) {
 
     /** HS256 = HMAC-SHA256，密钥短于 256 位时 jjwt 会拒绝用它签名。 */
@@ -65,6 +67,7 @@ public record AuthProperties(
         requirePositive(emailCodeTtl, "loom.auth.email-code-ttl");
         requirePositive(emailCodeCooldown, "loom.auth.email-code-cooldown");
         requirePositive(permissionCacheTtl, "loom.auth.permission-cache-ttl");
+        requirePositive(authenticationCacheTtl, "loom.auth.authentication-cache-ttl");
         if (emailCodeMaxAttempts < 1) {
             throw new IllegalStateException(
                     "loom.auth.email-code-max-attempts 必须大于 0：0 会让验证码永远无法通过。");

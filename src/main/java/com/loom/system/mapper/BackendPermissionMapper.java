@@ -23,18 +23,22 @@ public interface BackendPermissionMapper {
 
     @Insert(
             """
+            <script>
             INSERT INTO sys_permission
                 (id, name, type, perm, backend_required, last_seen_time, remark)
             VALUES
-                (#{id}, #{permission}, 'API', #{permission}, 1, CURRENT_TIMESTAMP,
-                 '后端启动扫描自动发现')
+            <foreach collection="permissions" item="item" separator=",">
+                (#{item.id}, #{item.permission}, 'API', #{item.permission}, 1,
+                 CURRENT_TIMESTAMP, '后端启动扫描自动发现')
+            </foreach>
             ON DUPLICATE KEY UPDATE
                    name = VALUES(name),
                    type = 'API',
                    backend_required = 1,
                 last_seen_time = CURRENT_TIMESTAMP
+            </script>
             """)
-    int upsertBackendPermission(@Param("id") long id, @Param("permission") String permission);
+    int upsertBackendPermissions(@Param("permissions") List<BackendPermissionSeed> permissions);
 
     @Select(
             """
@@ -70,4 +74,6 @@ public interface BackendPermissionMapper {
              WHERE rp.permission_id = #{permissionId}
             """)
     List<Long> selectAffectedUserIds(@Param("permissionId") long permissionId);
+
+    record BackendPermissionSeed(long id, String permission) {}
 }
