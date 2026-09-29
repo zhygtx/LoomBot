@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from plugin_catalog.loader import collect_workflow_nodes, iter_python_files
+from system.scanner.loader import collect_workflow_nodes, iter_python_files
 
 log = logging.getLogger("workflow-plugins")
 

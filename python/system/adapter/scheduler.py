@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from adapter_host.redis_bus import RedisWorkflowBus
+from system.adapter.redis_bus import RedisWorkflowBus
 
 log = logging.getLogger("adapter-scheduler")
 

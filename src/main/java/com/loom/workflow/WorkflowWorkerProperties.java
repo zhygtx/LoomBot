@@ -24,10 +24,10 @@ public record WorkflowWorkerProperties(
 
     public WorkflowWorkerProperties {
         autoStart = autoStart == null || autoStart;
-        module = module == null || module.isBlank() ? "workflow_worker.main" : module.strip();
+        module = module == null || module.isBlank() ? "system.executor.main" : module.strip();
         workingDirectory =
                 workingDirectory == null || workingDirectory.isBlank()
-                        ? "."
+                        ? "python"
                         : workingDirectory.strip();
         controlToken =
                 controlToken == null || controlToken.isBlank()

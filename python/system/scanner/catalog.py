@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from plugin_catalog.adapters import scan_adapter
-from plugin_catalog.errors import ScanError
-from plugin_catalog.manifest import read_manifest
-from plugin_catalog.nodes import scan_entities, scan_workflow_nodes
+from system.scanner.adapters import scan_adapter
+from system.scanner.errors import ScanError
+from system.scanner.manifest import read_manifest
+from system.scanner.nodes import scan_entities, scan_workflow_nodes
 
 PROTOCOL_VERSION = 1
 

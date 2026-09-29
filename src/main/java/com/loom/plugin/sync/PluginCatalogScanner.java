@@ -42,7 +42,7 @@ public class PluginCatalogScanner {
                 List.of(
                         adapterProperties.pythonCommand(),
                         "-m",
-                        "adapter_host.describe",
+                        "system.scanner.describe",
                         pluginDir.toString());
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(workingDirectory.toFile());

@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from plugin_catalog.loader import collect_entities, collect_workflow_nodes, iter_python_files
-from plugin_catalog.signature import (
+from system.scanner.loader import collect_entities, collect_workflow_nodes, iter_python_files
+from system.scanner.signature import (
     describe_entity,
     describe_parameters,
     describe_return,

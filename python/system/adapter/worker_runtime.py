@@ -18,9 +18,9 @@ from typing import Any, Awaitable, Callable
 import httpx
 import websockets
 
-from adapter_host.models import ConnectionObservation, DesiredConnection
-from plugin_catalog.adapters import scan_adapter_specs
-from plugin_catalog.manifest import AdapterDecl, read_manifest
+from system.adapter.models import ConnectionObservation, DesiredConnection
+from system.scanner.adapters import scan_adapter_specs
+from system.scanner.manifest import AdapterDecl, read_manifest
 
 log = logging.getLogger("adapter-worker")
 

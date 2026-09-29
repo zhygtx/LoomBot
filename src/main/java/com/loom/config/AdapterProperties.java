@@ -71,11 +71,11 @@ public record AdapterProperties(
         autoStart = autoStart == null || autoStart;
         workingDirectory =
                 workingDirectory == null || workingDirectory.isBlank()
-                        ? "."
+                        ? "python"
                         : workingDirectory.strip();
         hostModule =
                 hostModule == null || hostModule.isBlank()
-                        ? "adapter_host.main"
+                        ? "system.adapter.main"
                         : hostModule.strip();
         pluginRoot = pluginRoot == null || pluginRoot.isBlank() ? "plugins" : pluginRoot.strip();
         redisUrl =

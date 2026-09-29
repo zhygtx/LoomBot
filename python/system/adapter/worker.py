@@ -9,9 +9,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from adapter_host.models import DesiredConnection
-from adapter_host.protocol import MAX_MESSAGE_BYTES, message, require_message
-from adapter_host.worker_runtime import WorkerRuntime
+from system.adapter.models import DesiredConnection
+from system.adapter.protocol import MAX_MESSAGE_BYTES, message, require_message
+from system.adapter.worker_runtime import WorkerRuntime
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("adapter-worker")

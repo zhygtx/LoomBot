@@ -2,7 +2,7 @@
 
 用法：
 
-    python -m adapter_host.describe <插件目录>
+    python -m system.scanner.describe <插件目录>
 
 标准输出是整份目录 JSON（适配器、工作流节点、实体）；扫描失败时向标准错误写原因并返回非零退出码。
 """
@@ -14,7 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-from plugin_catalog import ScanError, build_catalog
+from system.scanner import ScanError, build_catalog
 
 
 def main() -> None:

@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from adapter_host.redis_bus import RedisWorkflowBus
+from system.adapter.redis_bus import RedisWorkflowBus
 
 log = logging.getLogger("adapter-ingress")
 

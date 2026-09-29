@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from workflow_worker.errors import ParamError
+from system.executor.errors import ParamError
 
 _SCALARS = {"str", "int", "float", "bool", "bytes", "Decimal", "UUID", "Path"}
 _CONTAINERS = {"list", "dict", "set", "tuple", "frozenset"}

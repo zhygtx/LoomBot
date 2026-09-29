@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from typing import Any
 
-from workflow_worker.errors import ParamError
+from system.executor.errors import ParamError
 
 _ALLOWED_NODES = (
     ast.Expression,

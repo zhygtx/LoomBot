@@ -9,9 +9,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from adapter_host.event_ingress import EventIngress
-from adapter_host.models import ConnectionObservation, DesiredConnection
-from adapter_host.protocol import MAX_MESSAGE_BYTES, message
+from system.adapter.event_ingress import EventIngress
+from system.adapter.models import ConnectionObservation, DesiredConnection
+from system.adapter.protocol import MAX_MESSAGE_BYTES, message
 
 log = logging.getLogger("adapter-supervisor")
 
@@ -36,7 +36,7 @@ class WorkerHandle:
             return
         self.ready = False
         self.process = await asyncio.create_subprocess_exec(
-            self.python_command, "-m", "adapter_host.worker", "--plugin-dir", self.desired.plugin_path,
+            self.python_command, "-m", "system.adapter.worker", "--plugin-dir", self.desired.plugin_path,
             "--entry-point", self.desired.entry_point, "--adapter-type", self.desired.connection_type,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=str(Path(__file__).resolve().parent.parent),

@@ -46,4 +46,5 @@ build/
 __pycache__/
 *.py[cod]
 .venv/
-/plugins/
+/python/plugins/
+/python/logs/

@@ -5,12 +5,16 @@
 ## 启动
 
 ```powershell
-python -m pip install -r adapter_host/requirements.txt
+cd python
+python -m pip install -r system/adapter/requirements.txt
 $env:ADAPTER_PLUGIN_ROOT = "plugins"
 $env:ADAPTER_CONTROL_TOKEN = "loom-dev-adapter-token"
 $env:ADAPTER_REDIS_URL = "redis://localhost:6379/0"
-python -m adapter_host.main
+python -m system.adapter.main
 ```
+
+工作目录必须是 `python/`：`system.*` 包和插件 SDK（`loom_node` / `loom_adapter`）都相对它导入，
+`ADAPTER_PLUGIN_ROOT` 也相对它解析。
 
 控制接口默认监听 `127.0.0.1:9100`，反向 WebSocket 网关默认监听 `127.0.0.1:9000`。所有控制请求都要带 `X-Adapter-Token`。
 
@@ -27,7 +31,7 @@ python -m adapter_host.main
   "enabled": true,
   "adapter": {"package": "napcat-adapter", "version": "1.0.3", "type": "napcat"},
   "transport": {"direction": "REVERSE", "endpointId": "/ws/opaque-path"},
-  "pluginPath": "plugins/napcat-adapter",
+  "pluginPath": "python/plugins/napcat-adapter",
   "entryPoint": "main.py",
   "config": {"token": "..."},
   "configHash": "sha256:..."
@@ -40,12 +44,12 @@ python -m adapter_host.main
 
 ## 日志
 
-适配器监管器同时把日志写到标准错误和 `logs/adapter-host.log`（UTF-8）。Java 托管本地进程时，
+适配器监管器同时把日志写到标准错误和 `python/logs/adapter-host.log`（UTF-8，相对工作目录）。Java 托管本地进程时，
 这些行也会转发到 Java 日志，并带 `[adapter-host]` 前缀；插件工作进程的日志还会带
 `[worker:<plugin_key>]` 前缀。
 
 ```powershell
-Get-Content .\logs\adapter-host.log -Wait -Tail 100
+Get-Content .\python\logs\adapter-host.log -Wait -Tail 100
 ```
 
 ## 插件工作进程

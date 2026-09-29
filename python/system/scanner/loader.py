@@ -11,7 +11,7 @@ from typing import Any
 
 import loom_adapter
 import loom_node
-from plugin_catalog.errors import ScanError
+from system.scanner.errors import ScanError
 
 
 def repo_root() -> Path:

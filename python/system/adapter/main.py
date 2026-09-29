@@ -10,13 +10,13 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket
 import uvicorn
 
-from adapter_host.config import HostConfig
-from adapter_host.event_ingress import EventIngress
-from adapter_host.gateway import WebSocketGateway
-from adapter_host.models import DesiredConnection
-from adapter_host.redis_bus import RedisWorkflowBus
-from adapter_host.scheduler import ScheduleRegistry
-from adapter_host.supervisor import AdapterSupervisor
+from system.adapter.config import HostConfig
+from system.adapter.event_ingress import EventIngress
+from system.adapter.gateway import WebSocketGateway
+from system.adapter.models import DesiredConnection
+from system.adapter.redis_bus import RedisWorkflowBus
+from system.adapter.scheduler import ScheduleRegistry
+from system.adapter.supervisor import AdapterSupervisor
 
 Path("logs").mkdir(exist_ok=True)
 logging.basicConfig(

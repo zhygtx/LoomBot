@@ -13,12 +13,12 @@ import redis.asyncio as redis
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request
 
-from workflow_worker.config import WorkerConfig
-from workflow_worker.context import ActionClient
-from workflow_worker.definitions import DefinitionClient
-from workflow_worker.engine import STATUS_FAILED, WorkflowEngine, now_ms
-from workflow_worker.errors import WorkflowError
-from workflow_worker.plugins import PluginRegistry
+from system.executor.config import WorkerConfig
+from system.executor.context import ActionClient
+from system.executor.definitions import DefinitionClient
+from system.executor.engine import STATUS_FAILED, WorkflowEngine, now_ms
+from system.executor.errors import WorkflowError
+from system.executor.plugins import PluginRegistry
 
 logging.basicConfig(
     level=logging.INFO,

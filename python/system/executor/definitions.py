@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from workflow_worker.errors import DefinitionError
+from system.executor.errors import DefinitionError
 
 log = logging.getLogger("workflow-definitions")
 

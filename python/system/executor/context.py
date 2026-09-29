@@ -8,7 +8,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
-from workflow_worker.errors import ActionError
+from system.executor.errors import ActionError
 
 
 @dataclass

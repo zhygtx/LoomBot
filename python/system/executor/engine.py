@@ -14,18 +14,18 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from plugin_catalog.signature import describe_parameters
-from workflow_worker import expressions
-from workflow_worker.context import ActionClient, ExecutionContext
-from workflow_worker.convert import convert
-from workflow_worker.errors import (
+from system.scanner.signature import describe_parameters
+from system.executor import expressions
+from system.executor.context import ActionClient, ExecutionContext
+from system.executor.convert import convert
+from system.executor.errors import (
     ActionError,
     DefinitionError,
     NodeError,
     ParamError,
     WorkflowError,
 )
-from workflow_worker.plugins import PluginRegistry
+from system.executor.plugins import PluginRegistry
 
 log = logging.getLogger("workflow-engine")
 

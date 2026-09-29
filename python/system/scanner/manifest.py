@@ -6,7 +6,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from plugin_catalog.errors import ScanError
+from system.scanner.errors import ScanError
 
 DEFAULT_EVENTS_DIR = "events"
 DEFAULT_ACTIONS_DIR = "actions"

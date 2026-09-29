@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from plugin_catalog.errors import ScanError
-from plugin_catalog.loader import collect_adapter_nodes, iter_python_files
-from plugin_catalog.manifest import AdapterDecl
+from system.scanner.errors import ScanError
+from system.scanner.loader import collect_adapter_nodes, iter_python_files
+from system.scanner.manifest import AdapterDecl
 
 
 def _direction(plugin_dir: Path, adapter: AdapterDecl) -> str:
