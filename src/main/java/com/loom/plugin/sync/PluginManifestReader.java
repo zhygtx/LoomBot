@@ -35,17 +35,6 @@ public final class PluginManifestReader {
                 }
             }
         }
-        List<String> triggerNodes = new ArrayList<>();
-        TomlArray triggerValues = toml.getArray("adapter.trigger_nodes");
-        if (triggerValues != null) {
-            for (int index = 0; index < triggerValues.size(); index++) {
-                String value = triggerValues.getString(index);
-                if (value != null && !value.isBlank()) {
-                    triggerNodes.add(value.strip());
-                }
-            }
-        }
-
         List<AdapterManifest> adapters = new ArrayList<>();
         // tomlj 1.1.1 的 getArray 会把「表数组」判定为异构数组并抛异常，
         // [[adapters]] 必须通过 get + TomlArray 读，不能走 getArray。
@@ -56,14 +45,6 @@ public final class PluginManifestReader {
                 if (table == null) {
                     continue;
                 }
-                List<String> nodes = new ArrayList<>();
-                TomlArray nodeValues = table.getArray("trigger_nodes");
-                if (nodeValues != null) {
-                    for (int nodeIndex = 0; nodeIndex < nodeValues.size(); nodeIndex++) {
-                        String value = nodeValues.getString(nodeIndex);
-                        if (value != null && !value.isBlank()) nodes.add(value.strip());
-                    }
-                }
                 adapters.add(
                         new AdapterManifest(
                                 firstText(table, "type", "connection_type"),
@@ -71,8 +52,8 @@ public final class PluginManifestReader {
                                 firstText(table, "connection_schema"),
                                 firstText(table, "protocol_version"),
                                 firstText(table, "schema_version"),
-                                firstText(table, "node_prefix"),
-                                List.copyOf(nodes)));
+                                firstText(table, "events_dir"),
+                                firstText(table, "actions_dir")));
             }
         }
 
@@ -89,8 +70,8 @@ public final class PluginManifestReader {
                 text(toml, "adapter.connection_schema"),
                 text(toml, "adapter.protocol_version"),
                 text(toml, "adapter.schema_version"),
-                text(toml, "adapter.node_prefix"),
-                List.copyOf(triggerNodes),
+                text(toml, "adapter.events_dir"),
+                text(toml, "adapter.actions_dir"),
                 List.copyOf(adapters));
     }
 
@@ -113,8 +94,8 @@ public final class PluginManifestReader {
             String connectionSchema,
             String protocolVersion,
             String schemaVersion,
-            String nodePrefix,
-            List<String> triggerNodes) {}
+            String eventsDir,
+            String actionsDir) {}
 
     public record PluginManifest(
             String key,
@@ -129,7 +110,7 @@ public final class PluginManifestReader {
             String connectionSchema,
             String protocolVersion,
             String schemaVersion,
-            String triggerNodePrefix,
-            List<String> triggerNodes,
+            String eventsDir,
+            String actionsDir,
             List<AdapterManifest> adapters) {}
 }

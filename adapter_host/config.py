@@ -18,6 +18,7 @@ class HostConfig:
     index_prefix: str
     task_ttl_seconds: int
     python_command: str
+    event_audit: bool
 
     @classmethod
     def from_env(cls) -> "HostConfig":
@@ -31,4 +32,6 @@ class HostConfig:
             index_prefix=os.getenv("WORKFLOW_INDEX_PREFIX", "loom:workflow:index"),
             task_ttl_seconds=int(os.getenv("WORKFLOW_TASK_TTL_SECONDS", "300")),
             python_command=os.getenv("ADAPTER_PYTHON_COMMAND", "python"),
+            event_audit=os.getenv("ADAPTER_EVENT_AUDIT", "false").strip().lower()
+            in {"1", "true", "yes", "on"},
         )

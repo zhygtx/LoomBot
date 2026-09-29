@@ -47,6 +47,7 @@ class RedisWorkflowBus:
         workflow_version_id: int,
         event: dict[str, Any],
         trace_id: str | None = None,
+        event_id: str | None = None,
     ) -> str:
         now = int(time.time() * 1000)
         deadline = now + self._ttl_seconds * 1000
@@ -55,6 +56,7 @@ class RedisWorkflowBus:
         fields = {
             "messageId": message_id,
             "executionId": execution_id,
+            "eventId": event_id or "",
             "traceId": trace_id or uuid.uuid4().hex,
             "connectionId": str(connection_id),
             "connectionType": connection_type,
@@ -82,6 +84,34 @@ class RedisWorkflowBus:
             "payload": json.dumps(envelope["payload"], ensure_ascii=False, separators=(",", ":")),
         }
         return await self._redis.xadd(self._event_stream, fields, maxlen=100000, approximate=True)
+
+    async def publish_scheduled_task(
+        self,
+        *,
+        workflow_version_id: int,
+        node_key: str,
+        event: dict[str, Any] | None = None,
+    ) -> str:
+        """定时触发投递的任务：没有连接来源，字段留空。"""
+        now = int(time.time() * 1000)
+        deadline = now + self._ttl_seconds * 1000
+        fields = {
+            "messageId": str(uuid.uuid4()),
+            "executionId": str(uuid.uuid4()),
+            "eventId": "",
+            "traceId": uuid.uuid4().hex,
+            "connectionId": "",
+            "connectionType": "",
+            "pluginVersionId": "",
+            "nodeKey": node_key,
+            "workflowVersionId": str(workflow_version_id),
+            "event": json.dumps(event or {"triggerTime": now}, ensure_ascii=False, separators=(",", ":")),
+            "createdAt": str(now),
+            "deadline": str(deadline),
+        }
+        record_id = await self._redis.xadd(self._task_stream, fields)
+        await self._redis.zadd(self._deadline_key, {record_id: deadline})
+        return record_id
 
     async def cleanup_expired(self) -> int:
         now = int(time.time() * 1000)

@@ -15,6 +15,7 @@ from adapter_host.event_ingress import EventIngress
 from adapter_host.gateway import WebSocketGateway
 from adapter_host.models import DesiredConnection
 from adapter_host.redis_bus import RedisWorkflowBus
+from adapter_host.scheduler import ScheduleRegistry
 from adapter_host.supervisor import AdapterSupervisor
 
 Path("logs").mkdir(exist_ok=True)
@@ -62,15 +63,18 @@ def _take_over_uvicorn_logging() -> None:
 _take_over_uvicorn_logging()
 config = HostConfig.from_env()
 redis_bus = RedisWorkflowBus(config.redis_url, config.task_stream, config.index_prefix, config.task_ttl_seconds)
-supervisor = AdapterSupervisor(config, EventIngress(redis_bus))
+supervisor = AdapterSupervisor(config, EventIngress(redis_bus, config.event_audit))
+scheduler = ScheduleRegistry(redis_bus)
 gateway = WebSocketGateway(supervisor)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    scheduler.start()
     try:
         yield
     finally:
+        await scheduler.stop()
         await supervisor.stop()
         await redis_bus.close()
 
@@ -132,6 +136,15 @@ async def remove(connection_id: int, x_adapter_token: str | None = Header(defaul
 async def observations(x_adapter_token: str | None = Header(default=None)) -> dict[str, Any]:
     require_token(x_adapter_token)
     return {"runtimeReachable": True, "observations": supervisor.statuses()}
+
+
+@app.post("/internal/schedules/snapshot")
+async def schedules(request: Request, x_adapter_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Java 推送定时触发快照；适配器层负责 Cron 求值和任务投递。"""
+    require_token(x_adapter_token)
+    body = await request.json()
+    count = scheduler.replace(list(body.get("schedules") or []))
+    return {"accepted": True, "count": count}
 
 
 @app.post("/internal/actions/{connection_id}")

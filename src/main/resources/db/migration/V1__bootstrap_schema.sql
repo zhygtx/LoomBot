@@ -273,18 +273,21 @@ CREATE TABLE plugin_node (
     plugin_version_id BIGINT       NOT NULL,
     node_key          VARCHAR(128) NOT NULL,
     node_type         VARCHAR(16)  NOT NULL,
+    connection_type   VARCHAR(64)  NULL,
     name              VARCHAR(128) NOT NULL,
     description       VARCHAR(512) NULL,
     input_schema      JSON         NULL,
     output_schema     JSON         NULL,
     source_ref        VARCHAR(255) NULL,
+    signature_hash    CHAR(32)     NULL,
     sort              INT          NOT NULL DEFAULT 0,
     create_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uk_plugin_node (plugin_version_id, node_key),
     KEY idx_plugin_node_key (node_key),
-    KEY idx_plugin_node_type (node_type)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '插件版本自省出的节点目录';
+    KEY idx_plugin_node_type (node_type),
+    KEY idx_plugin_node_connection (connection_type)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '插件版本扫描出的节点目录';
 
 CREATE TABLE plugin_dependency (
     id                BIGINT       NOT NULL,
@@ -340,9 +343,9 @@ CREATE TABLE workflow_execution (
     execution_id             VARCHAR(64)  NOT NULL,
     workflow_id              BIGINT       NOT NULL,
     definition_version       INT          NOT NULL,
-    connection_id            BIGINT       NOT NULL,
-    adapter_plugin_version_id BIGINT      NOT NULL,
-    connection_type          VARCHAR(64)  NOT NULL,
+    connection_id            BIGINT       NULL,
+    adapter_plugin_version_id BIGINT      NULL,
+    connection_type          VARCHAR(64)  NULL,
     node_key                 VARCHAR(128) NOT NULL,
     group_id                 VARCHAR(64)  NULL,
     event_summary            VARCHAR(1024) NULL,
@@ -498,7 +501,13 @@ INSERT INTO sys_permission (id, name, type, perm, backend_required, remark) VALU
     (10, '查看角色授权', 'API', 'system:role:list', 1, '权限关系管理'),
     (11, '更新角色授权', 'API', 'system:role:update', 1, '权限关系管理'),
     (12, '查看系统配置', 'API', 'system:config:list', 1, '系统配置入口'),
-    (13, '更新系统配置', 'API', 'system:config:update', 1, '系统配置入口');
+    (13, '更新系统配置', 'API', 'system:config:update', 1, '系统配置入口'),
+    (14, '查看工作流', 'API', 'workflow:def:list', 1, '工作流列表与详情'),
+    (15, '保存工作流', 'API', 'workflow:def:save', 1, '新建或保存新版本'),
+    (16, '启停工作流', 'API', 'workflow:def:update', 1, '启用或停用工作流'),
+    (17, '删除工作流', 'API', 'workflow:def:delete', 1, '删除工作流及其版本'),
+    (18, '测试工作流', 'API', 'workflow:def:run', 1, '测试执行一次工作流'),
+    (19, '查看执行日志', 'API', 'workflow:log:list', 1, '工作流执行记录');
 
 -- 站长只绑这一行超级权限，以后新增权限点自动拥有
 INSERT INTO sys_role_permission (role_id, permission_id) VALUES (3, 1);
@@ -527,11 +536,19 @@ VALUES
     (1003, 1000, 'MENU', '系统配置', 'system-config', '/system/config',
      'system.config', 'sliders', NULL, 30, 1, 0, '注册、登录、验证码等系统开关'),
     (1100, 0, 'MENU', '连接测试台', 'connections', '/connections',
-     'connections.playground', 'network', NULL, 20, 1, 0, '创建插件连接并验证反向/正向适配器');
+     'connections.playground', 'network', NULL, 20, 1, 0, '创建插件连接并验证反向/正向适配器'),
+    (1200, 0, 'CATALOG', '工作流', NULL, NULL, NULL, 'connection', NULL,
+     30, 1, 0, '工作流编排与执行'),
+    (1201, 1200, 'MENU', '工作流列表', 'workflow-list', '/workflow/list',
+     'workflow.list', 'list', NULL, 10, 1, 0, '工作流定义、启停与手动执行'),
+    (1202, 1200, 'MENU', '执行日志', 'workflow-log', '/workflow/log',
+     'workflow.log', 'clock', NULL, 20, 1, 0, '工作流执行记录');
 
 -- 站长要能看到**目录本身**：navigation() 只纳入「父节点也可见」的条目，
 -- 缺了 (3, 1000) 这一行，三个子菜单会因为父级不可见被连坐隐藏，侧边栏直接空掉。
-INSERT INTO sys_role_menu (role_id, menu_id) VALUES (3, 1000), (3, 1001), (3, 1002), (3, 1003), (3, 1100);
+INSERT INTO sys_role_menu (role_id, menu_id) VALUES
+    (3, 1000), (3, 1001), (3, 1002), (3, 1003), (3, 1100),
+    (3, 1200), (3, 1201), (3, 1202);
 
 -- ---------------------------------------------------------------------------
 -- 系统配置

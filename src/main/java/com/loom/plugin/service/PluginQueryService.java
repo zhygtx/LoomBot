@@ -96,8 +96,11 @@ public class PluginQueryService {
                                         new PluginNodeResponse(
                                                 node.getNodeKey(),
                                                 node.getNodeType(),
+                                                node.getConnectionType(),
                                                 node.getName(),
-                                                node.getDescription()))
+                                                node.getDescription(),
+                                                node.getSourceRef(),
+                                                node.getSort()))
                         .toList();
         return new PluginVersionResponse(
                 version.getId(),

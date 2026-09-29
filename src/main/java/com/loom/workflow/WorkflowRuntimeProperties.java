@@ -1,5 +1,6 @@
 package com.loom.workflow;
 
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -9,13 +10,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param executionLogStreamKey Worker 执行日志 Stream
  * @param indexKeyPrefix 触发倒排索引 key 前缀
  * @param cleanupIntervalMs 过期任务清理周期
+ * @param taskTtl 待执行任务有效期
  */
 @ConfigurationProperties(prefix = "loom.workflow.runtime")
 public record WorkflowRuntimeProperties(
         String taskStreamKey,
         String executionLogStreamKey,
         String indexKeyPrefix,
-        Long cleanupIntervalMs) {
+        Long cleanupIntervalMs,
+        Duration taskTtl) {
 
     public WorkflowRuntimeProperties {
         taskStreamKey =
@@ -32,5 +35,9 @@ public record WorkflowRuntimeProperties(
                         : indexKeyPrefix.strip();
         cleanupIntervalMs =
                 cleanupIntervalMs == null || cleanupIntervalMs <= 0 ? 60_000L : cleanupIntervalMs;
+        taskTtl =
+                taskTtl == null || taskTtl.isZero() || taskTtl.isNegative()
+                        ? Duration.ofMinutes(5)
+                        : taskTtl;
     }
 }

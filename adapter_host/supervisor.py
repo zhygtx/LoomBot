@@ -296,14 +296,22 @@ class AdapterSupervisor:
         if not worker or not desired:
             return
         try:
-            await self.ingress.publish(
+            envelope = await self.ingress.publish(
                 connection_id=connection_id,
                 revision=desired.revision,
-                adapter_type=f"{desired.plugin_key}/{desired.connection_type}",
+                connection_type=desired.connection_type,
+                plugin_version_id=desired.plugin_version_id,
                 node_key=value["nodeKey"],
                 payload=value.get("payload") or {},
                 allowed_nodes=set(value.get("allowedNodes") or []),
             )
+            if envelope.get("workflowVersionIds"):
+                log.info(
+                    "事件已投递工作流: connection=%s node=%s workflows=%s",
+                    connection_id,
+                    value["nodeKey"],
+                    envelope["workflowVersionIds"],
+                )
         except ValueError:
             log.warning("插件发出了未声明节点: %s", value.get("nodeKey"))
 

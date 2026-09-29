@@ -17,6 +17,7 @@ import com.loom.plugin.mapper.PluginMapper;
 import com.loom.plugin.mapper.PluginNodeMapper;
 import com.loom.plugin.mapper.PluginRepositoryMapper;
 import com.loom.plugin.mapper.PluginVersionMapper;
+import com.loom.plugin.sync.PluginCatalogScanner;
 import com.loom.plugin.sync.PluginDependencyInstaller;
 import com.loom.plugin.sync.PluginManifestReader;
 import com.loom.plugin.sync.PluginRepositorySynchronizer;
@@ -54,9 +55,17 @@ public class PluginSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(PluginSyncService.class);
 
+    /**
+     * 节点目录扫描的语义版本。
+     *
+     * <p>目录由 Python 扫描器生成，扫描规则（参数必填判定、返回字段展开等）属于框架代码。 改这些规则时把它 +1，强制下次启动重扫所有插件版本。
+     */
+    private static final int CATALOG_VERSION = 2;
+
     private final PluginProperties properties;
     private final PluginRepositorySynchronizer repositorySynchronizer;
     private final PluginDependencyInstaller dependencyInstaller;
+    private final PluginCatalogScanner catalogScanner;
     private final PluginRepositoryMapper repositoryMapper;
     private final PluginMapper pluginMapper;
     private final PluginVersionMapper versionMapper;
@@ -72,6 +81,7 @@ public class PluginSyncService {
             PluginProperties properties,
             PluginRepositorySynchronizer repositorySynchronizer,
             PluginDependencyInstaller dependencyInstaller,
+            PluginCatalogScanner catalogScanner,
             PluginRepositoryMapper repositoryMapper,
             PluginMapper pluginMapper,
             PluginVersionMapper versionMapper,
@@ -84,6 +94,7 @@ public class PluginSyncService {
         this.properties = properties;
         this.repositorySynchronizer = repositorySynchronizer;
         this.dependencyInstaller = dependencyInstaller;
+        this.catalogScanner = catalogScanner;
         this.repositoryMapper = repositoryMapper;
         this.pluginMapper = pluginMapper;
         this.versionMapper = versionMapper;
@@ -109,7 +120,7 @@ public class PluginSyncService {
         }
     }
 
-    /** 插件目录或远端仓库发生变化时自动重扫，不需要用户在页面上手动触发。 */
+    /** 插件目录或远端仓库发生变化时自动重扫，不需要用户在页面上人工操作。 */
     @Scheduled(fixedDelayString = "${loom.plugin.sync-interval:30s}")
     public void syncAutomatically() {
         if (!properties.autoSync()) {
@@ -139,7 +150,10 @@ public class PluginSyncService {
                 throw e;
             }
 
-            if (snapshot.commitHash().equals(repository.getLastCommitHash())
+            // 快照键 = commit + 扫描语义版本。扫描器属于框架代码，插件目录可能一个字都没改，
+            // 但参数必填规则、返回字段展开这些行为变了，目录就必须重扫，否则一直沿用旧结果。
+            String scanKey = snapshot.commitHash() + "@catalog" + CATALOG_VERSION;
+            if (scanKey.equals(repository.getLastCommitHash())
                     && repository.getLastError() == null
                     && hasRegisteredConnectionTypes()) {
                 log.info("插件仓库 commit 未变化，跳过扫描: {}", snapshot.commitHash());
@@ -151,7 +165,7 @@ public class PluginSyncService {
             try {
                 transactionTemplate.executeWithoutResult(
                         status -> applySnapshot(repository, snapshot));
-                repository.setLastCommitHash(snapshot.commitHash());
+                repository.setLastCommitHash(scanKey);
                 repository.setLastScanTime(LocalDateTime.now());
                 repository.setLastError(null);
                 repositoryMapper.updateById(repository);
@@ -255,7 +269,7 @@ public class PluginSyncService {
         String artifactSha256;
         try {
             manifest = PluginManifestReader.read(pluginDir);
-            artifactSha256 = com.loom.plugin.sync.DirectoryHasher.sha256(pluginDir);
+            artifactSha256 = catalogHash(pluginDir);
         } catch (IOException e) {
             throw new IllegalStateException("扫描插件版本失败: " + pluginDir, e);
         }
@@ -317,8 +331,8 @@ public class PluginSyncService {
         appendCapabilities(batch, version.getId(), manifest.capabilities());
         for (AdapterDeclaration adapter : adapters) {
             appendConnectionType(batch, version.getId(), plugin, manifest, adapter);
-            appendTriggerNodes(batch, version.getId(), plugin, manifest, adapter);
         }
+        appendCatalogNodes(batch, version.getId(), pluginDir, adapters);
         appendDependencies(batch, version.getId(), pluginDir);
         log.info(
                 "插件版本已{}: {}-{}, adapters={}",
@@ -326,6 +340,13 @@ public class PluginSyncService {
                 pluginEntry.key(),
                 versionEntry.version(),
                 adapters.stream().map(AdapterDeclaration::connectionType).toList());
+    }
+
+    /** 目录内容哈希 + 扫描语义版本：扫描规则变了也要重写这一版目录，不能只比目录内容。 */
+    private String catalogHash(Path pluginDir) throws IOException {
+        String contentHash = com.loom.plugin.sync.DirectoryHasher.sha256(pluginDir);
+        return com.loom.plugin.sync.DirectoryHasher.sha256(
+                contentHash + "@catalog" + CATALOG_VERSION);
     }
 
     private void updatePluginMetadata(
@@ -363,8 +384,8 @@ public class PluginSyncService {
                                 schemaFile,
                                 declared.protocolVersion(),
                                 declared.schemaVersion(),
-                                declared.nodePrefix(),
-                                declared.triggerNodes()));
+                                declared.eventsDir(),
+                                declared.actionsDir()));
             }
             return List.copyOf(result);
         }
@@ -401,8 +422,8 @@ public class PluginSyncService {
                 schemaFile,
                 manifest.protocolVersion(),
                 manifest.schemaVersion(),
-                manifest.triggerNodePrefix(),
-                manifest.triggerNodes());
+                manifest.eventsDir(),
+                manifest.actionsDir());
     }
 
     private AdapterDeclaration readAdapterDeclaration(
@@ -413,8 +434,8 @@ public class PluginSyncService {
             String schemaFile,
             String protocolVersion,
             String schemaVersion,
-            String nodePrefix,
-            List<String> triggerNodes) {
+            String eventsDir,
+            String actionsDir) {
         Path schemaPath = pluginDir.resolve(schemaFile).normalize();
         if (!schemaPath.startsWith(pluginDir) || !Files.isRegularFile(schemaPath)) {
             throw new IllegalArgumentException("连接 schema 文件不存在: " + schemaPath);
@@ -433,8 +454,8 @@ public class PluginSyncService {
                     protocolVersion == null ? "1" : protocolVersion,
                     schemaVersion,
                     schema.toString(),
-                    nodePrefix,
-                    triggerNodes == null ? List.of() : triggerNodes);
+                    eventsDir == null || eventsDir.isBlank() ? "events" : eventsDir.strip(),
+                    actionsDir == null || actionsDir.isBlank() ? "actions" : actionsDir.strip());
         } catch (RuntimeException e) {
             throw new IllegalStateException("连接 schema 读取失败: " + schemaPath, e);
         }
@@ -500,26 +521,44 @@ public class PluginSyncService {
         }
     }
 
-    private void appendTriggerNodes(
-            SyncBatch batch,
-            long versionId,
-            Plugin plugin,
-            PluginManifestReader.PluginManifest manifest,
-            AdapterDeclaration adapter) {
-        int sort = 0;
-        for (String declared : adapter.triggerNodes()) {
-            String nodeKey = normalizeNodeKey(adapter.triggerNodePrefix(), declared);
-            PluginNode node = new PluginNode();
-            node.setId(IdWorker.getId());
-            node.setPluginVersionId(versionId);
-            node.setNodeKey(nodeKey);
-            node.setNodeType("TRIGGER");
-            node.setName(nodeKey);
-            node.setDescription("Adapter Plugin 事件映射节点");
-            node.setSourceRef(adapter.entryPoint());
-            node.setSort(sort++);
-            batch.nodes.add(node);
+    /**
+     * 调用 Python 扫描入口导出节点目录。
+     *
+     * <p>节点不来自手写清单：适配器事件函数写 EVENT，适配器动作函数写 ACTION，普通插件函数写 NODE。 connection_type
+     * 非空表示执行时必须绑定连接。扫描失败即同步失败，保留上一次成功注册表。
+     */
+    private void appendCatalogNodes(
+            SyncBatch batch, long versionId, Path pluginDir, List<AdapterDeclaration> adapters) {
+        PluginCatalogScanner.Catalog catalog = catalogScanner.scan(pluginDir);
+        List<String> scannedAdapters = catalog.adapterTypes();
+        List<String> declaredAdapters =
+                adapters.stream().map(AdapterDeclaration::connectionType).toList();
+        if (!scannedAdapters.equals(declaredAdapters)) {
+            throw new IllegalStateException(
+                    "清单声明的适配器类型与扫描结果不一致: "
+                            + pluginDir
+                            + " declared="
+                            + declaredAdapters
+                            + " scanned="
+                            + scannedAdapters);
         }
+        for (PluginCatalogScanner.ScannedNode node : catalog.nodes()) {
+            PluginNode entity = new PluginNode();
+            entity.setId(IdWorker.getId());
+            entity.setPluginVersionId(versionId);
+            entity.setNodeKey(required(node.nodeKey(), "nodeKey", pluginDir));
+            entity.setNodeType(node.nodeType());
+            entity.setConnectionType(node.connectionType());
+            entity.setName(node.name());
+            entity.setDescription(trim(node.description(), 512));
+            entity.setInputSchema(node.inputSchema());
+            entity.setOutputSchema(node.outputSchema());
+            entity.setSourceRef(trim(node.sourceRef(), 255));
+            entity.setSignatureHash(node.signatureHash());
+            entity.setSort(node.sort());
+            batch.nodes.add(entity);
+        }
+        log.info("插件节点目录已导出: version={} nodes={}", versionId, catalog.nodes().size());
     }
 
     private void flushBatch(SyncBatch batch) {
@@ -557,15 +596,6 @@ public class PluginSyncService {
         if (!batch.dependencies.isEmpty()) {
             dependencyMapper.insertBatch(batch.dependencies);
         }
-    }
-
-    private static String normalizeNodeKey(String prefix, String declared) {
-        String value = declared == null ? "" : declared.strip();
-        if (prefix == null || prefix.isBlank()) {
-            return value;
-        }
-        String normalizedPrefix = prefix.strip();
-        return value.startsWith(normalizedPrefix + ".") ? value : normalizedPrefix + "." + value;
     }
 
     private PluginIndex readIndex(Path root) {
@@ -655,8 +685,8 @@ public class PluginSyncService {
                                         adapterNode.put(
                                                 "protocolVersion", adapter.protocolVersion());
                                         adapterNode.put("schemaVersion", adapter.schemaVersion());
-                                        adapterNode.put("nodePrefix", adapter.triggerNodePrefix());
-                                        adapterNode.put("triggerNodes", adapter.triggerNodes());
+                                        adapterNode.put("eventsDir", adapter.eventsDir());
+                                        adapterNode.put("actionsDir", adapter.actionsDir());
                                         return adapterNode;
                                     })
                             .toList());
@@ -719,8 +749,8 @@ public class PluginSyncService {
             String protocolVersion,
             String schemaVersion,
             String configSchemaJson,
-            String triggerNodePrefix,
-            List<String> triggerNodes) {}
+            String eventsDir,
+            String actionsDir) {}
 
     private static final class SyncBatch {
         private final List<PluginVersion> newVersions = new ArrayList<>();

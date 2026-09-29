@@ -97,6 +97,10 @@ public class SecurityConfig {
                                         // connection_definition）
                                         .requestMatchers("/ws/**")
                                         .permitAll()
+                                        // 内部接口：由共享令牌校验（见 WorkflowInternalController），
+                                        // 不走用户认证链
+                                        .requestMatchers("/internal/**")
+                                        .permitAll()
                                         .anyRequest()
                                         .authenticated())
                 .exceptionHandling(

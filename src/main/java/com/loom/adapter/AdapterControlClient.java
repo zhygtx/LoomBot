@@ -91,6 +91,17 @@ public class AdapterControlClient {
         return request("POST", "/internal/actions/" + connectionId, body);
     }
 
+    /** 推送定时触发快照；适配器层负责 Cron 求值和任务投递。 */
+    public JsonNode pushSchedules(List<Map<String, Object>> schedules) {
+        ObjectNode root = mapper.createObjectNode();
+        ArrayNode values = root.putArray("schedules");
+        for (Map<String, Object> item : schedules) {
+            ObjectNode node = values.addObject();
+            item.forEach((key, value) -> node.put(key, value == null ? "" : String.valueOf(value)));
+        }
+        return request("POST", "/internal/schedules/snapshot", root);
+    }
+
     private AdapterControlResult command(String path, JsonNode body) {
         return result(request("POST", path, body));
     }

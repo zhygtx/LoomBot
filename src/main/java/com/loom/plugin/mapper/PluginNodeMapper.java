@@ -14,13 +14,14 @@ public interface PluginNodeMapper extends BaseMapper<PluginNode> {
             """
             <script>
             INSERT INTO plugin_node
-                (id, plugin_version_id, node_key, node_type, name, description,
-                 input_schema, output_schema, source_ref, sort)
+                (id, plugin_version_id, node_key, node_type, connection_type, name, description,
+                 input_schema, output_schema, source_ref, signature_hash, sort)
             VALUES
             <foreach collection="nodes" item="item" separator=",">
                 (#{item.id}, #{item.pluginVersionId}, #{item.nodeKey}, #{item.nodeType},
+                 #{item.connectionType},
                  #{item.name}, #{item.description}, #{item.inputSchema}, #{item.outputSchema},
-                 #{item.sourceRef}, #{item.sort})
+                 #{item.sourceRef}, #{item.signatureHash}, #{item.sort})
             </foreach>
             </script>
             """)
