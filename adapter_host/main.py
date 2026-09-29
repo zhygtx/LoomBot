@@ -27,6 +27,39 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("adapter-control")
+
+
+class _SkipControlPlanePollingAccessLog(logging.Filter):
+    """丢掉 Java 控制面的轮询访问日志，只保留真正有价值的请求。
+
+    控制面每 2 秒被轮询一次，如果照常记录访问日志会淹没连接相关的日志。
+    """
+
+    _POLLED_PATHS = ("/internal/health", "/internal/observations", "/internal/runtime")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3:
+            return not str(args[2]).startswith(self._POLLED_PATHS)
+        return True
+
+
+def _take_over_uvicorn_logging() -> None:
+    """统一接管 uvicorn 的日志，避免两个 Server 互相覆盖日志配置。
+
+    控制面和网关在同一个进程里，uvicorn 默认的 log_config 会在每个 Server 启动时
+    重置共享的 "uvicorn.access" logger，使控制面的 access_log=False 失效。
+    这里不再让 uvicorn 接管日志，改用过滤器精确丢弃轮询请求。
+    """
+
+    access = logging.getLogger("uvicorn.access")
+    access.setLevel(logging.INFO)
+    if not any(isinstance(item, _SkipControlPlanePollingAccessLog) for item in access.filters):
+        access.addFilter(_SkipControlPlanePollingAccessLog())
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+
+
+_take_over_uvicorn_logging()
 config = HostConfig.from_env()
 redis_bus = RedisWorkflowBus(config.redis_url, config.task_stream, config.index_prefix, config.task_ttl_seconds)
 supervisor = AdapterSupervisor(config, EventIngress(redis_bus))
@@ -128,8 +161,26 @@ gateway_app.websocket("/{path:path}")(websocket_gateway)
 
 if __name__ == "__main__":
     async def serve() -> None:
-        control = uvicorn.Server(uvicorn.Config(app, host=config.host, port=config.port, log_level="info"))
-        gateway_server = uvicorn.Server(uvicorn.Config(gateway_app, host=config.ws_host, port=config.ws_port, log_level="info"))
+        # log_config=None：不让 uvicorn 用默认 dictConfig 覆盖上面的日志接管。
+        # 轮询请求由 _SkipControlPlanePollingAccessLog 过滤，其余访问日志照常输出。
+        control = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                host=config.host,
+                port=config.port,
+                log_config=None,
+                log_level="info",
+            )
+        )
+        gateway_server = uvicorn.Server(
+            uvicorn.Config(
+                gateway_app,
+                host=config.ws_host,
+                port=config.ws_port,
+                log_config=None,
+                log_level="info",
+            )
+        )
         await asyncio.gather(control.serve(), gateway_server.serve())
 
     asyncio.run(serve())

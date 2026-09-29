@@ -52,6 +52,22 @@
 
     <logger name="com.loom" level="DEBUG" />
 
+    <!--
+      定时任务和它们触发的 SQL 不要刷屏：
+      - 连接状态同步每 2 秒跑一次
+      - 插件仓库扫描每 30 秒跑一次
+      - Mapper 的 DEBUG 会打印每条 SQL 和参数
+      这些调到 WARN，保留错误和警告；需要排查 SQL 时再临时调回 DEBUG。
+    -->
+    <logger name="com.loom.connection.mapper" level="WARN" />
+    <logger name="com.loom.plugin.mapper" level="WARN" />
+    <logger name="com.loom.auth.mapper" level="WARN" />
+    <logger name="com.loom.system.mapper" level="WARN" />
+    <logger name="com.loom.workflow.mapper" level="WARN" />
+    <logger name="com.loom.connection.sync.ConnectionRuntimeSyncService" level="WARN" />
+    <logger name="com.loom.plugin.service.PluginSyncService" level="WARN" />
+    <logger name="com.loom.plugin.sync" level="WARN" />
+
     <!-- 根日志级别配置 -->
     <root level="INFO">
         <appender-ref ref="CONSOLE" />
