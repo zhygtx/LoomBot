@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.loom.auth.service.UserService;
 import com.loom.common.api.ErrorCode;
 import com.loom.common.exception.BusinessException;
+import com.loom.common.security.CurrentUser;
 import com.loom.system.dto.RoleMenuPair;
 import com.loom.system.dto.RoleMenuResponse;
 import com.loom.system.dto.RolePermissionPair;
@@ -124,6 +125,7 @@ public class RoleRelationService {
     public void updateUserRoles(long userId, List<Long> ids) {
         requireUser(userId);
         requireRoles(ids);
+        protectOwnerBinding(userId, ids);
         protectLastOwner(userId, ids);
         mapper.clearUserRoles(userId);
         ids.stream().distinct().forEach(id -> mapper.addUserRole(userId, id));
@@ -246,7 +248,9 @@ public class RoleRelationService {
     @Transactional
     public void updatePermissions(long roleId, List<String> patterns) {
         requireRole(roleId);
+        requireOwnerForOwnerRole(roleId, "只有站长可以调整站长的权限");
         List<String> normalized = normalizePermissionPatterns(patterns);
+        requireOwnerToGrantWildcard(normalized);
         if (normalized.isEmpty()) {
             protectOwnerWildcard(roleId, List.of());
             mapper.clearPermissions(roleId);
@@ -267,6 +271,7 @@ public class RoleRelationService {
     @Transactional
     public void updateMenus(long roleId, List<Long> ids) {
         requireRole(roleId);
+        requireOwnerForOwnerRole(roleId, "只有站长可以调整站长的菜单");
         Set<Long> menuIds = normalizeMenuIds(ids);
         mapper.clearMenus(roleId);
         menuIds.forEach(id -> mapper.addMenu(roleId, id));
@@ -340,6 +345,52 @@ public class RoleRelationService {
             return;
         }
         throw new BusinessException(ErrorCode.BAD_REQUEST, "系统至少需要保留一名站长");
+    }
+
+    /**
+     * 拦住「非站长改动站长的角色绑定」。
+     *
+     * <p>这拦的是**授权链的两端**：既包括把 {@code OWNER} 授予某个用户（升权）， 也包括调整一个已经是站长的用户（比如把他从别的角色里摘出去、或者停用他）。
+     * 判据只看当前调用者是不是站长，因此管理员即使握着 {@code system:user:update} 也改不动站长这一列。
+     *
+     * <p>为什么放在角色绑定这一层，而不是靠前端把复选框置灰：置灰只是别让人点错， 接口才是边界。删掉前端限制、直接构造请求同样要落到这个守卫上。
+     */
+    private void protectOwnerBinding(long userId, List<Long> ids) {
+        Long ownerRoleId = mapper.selectOwnerRoleId();
+        if (ownerRoleId == null || currentUserIsOwner()) {
+            return;
+        }
+        if (ids.contains(ownerRoleId) || mapper.userHasRole(userId, ownerRoleId) == 1) {
+            throw new BusinessException(ErrorCode.OWNER_PROTECTED, "只有站长可以调整站长的角色");
+        }
+    }
+
+    /** 非站长不能修改 {@code OWNER} 角色自身的授权。 */
+    private void requireOwnerForOwnerRole(long roleId, String message) {
+        if ("OWNER".equals(mapper.selectRoleCode(roleId)) && !currentUserIsOwner()) {
+            throw new BusinessException(ErrorCode.OWNER_PROTECTED, message);
+        }
+    }
+
+    /**
+     * 拦住「非站长把超级权限 {@code *:*:*} 授给别的角色」。
+     *
+     * <p>不拦的话，管理员可以通过「改一个自己控制的角色 + 勾上超级权限」把自己变成站长： 角色编辑这条路径绕过了 {@link #protectOwnerBinding}。所以超级权限的
+     * **授予**本身也要限定为站长专属。
+     */
+    private void requireOwnerToGrantWildcard(List<String> normalized) {
+        if (normalized.contains("*:*:*") && !currentUserIsOwner()) {
+            throw new BusinessException(ErrorCode.OWNER_PROTECTED, "只有站长可以授予超级权限 *:*:*");
+        }
+    }
+
+    /** 当前调用者是否持有 {@code OWNER} 角色。 */
+    private boolean currentUserIsOwner() {
+        Long ownerRoleId = mapper.selectOwnerRoleId();
+        if (ownerRoleId == null) {
+            return false;
+        }
+        return mapper.userHasRole(CurrentUser.requireId(), ownerRoleId) == 1;
     }
 
     private void protectOwnerWildcard(long roleId, List<Long> ids) {

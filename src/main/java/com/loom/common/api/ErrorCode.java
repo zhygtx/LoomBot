@@ -56,6 +56,7 @@ public enum ErrorCode {
     MENU_NOT_FOUND(300010, "菜单不存在"),
     MENU_ROUTE_EXISTS(300011, "菜单路由名称已存在"),
     MENU_HAS_CHILDREN(300012, "菜单存在子节点，不能直接删除"),
+    OWNER_PROTECTED(300013, "站长角色与权限仅站长本人可操作"),
 
     // ---------- 4xxxxx 插件 ----------
     PLUGIN_NOT_FOUND(400000, "插件不存在"),

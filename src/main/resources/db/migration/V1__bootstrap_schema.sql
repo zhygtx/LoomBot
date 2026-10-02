@@ -524,6 +524,9 @@ INSERT INTO sys_role (id, code, name, sort, builtin, remark) VALUES
 -- 名字与分组是给人看的，写在这里免得第一次启动时权限页一片空白。
 -- 注意：扫描的 upsert 会把 name 重置成权限串本身，所以这些中文名在启动后会被覆盖 ——
 -- 这是已知偏差，见《菜单与权限当前实现.md》。
+--
+-- 连接权限本来只由启动扫描补建，这里显式列出来是为了**种子的角色授权能按 ID 绑定**：
+-- 迁移先于 ApplicationReadyEvent 的扫描执行，扫描那一刻权限行还不存在，subquery 会绑不到。
 INSERT INTO sys_permission (id, name, type, perm, backend_required, remark) VALUES
     (1, '超级权限', 'API', '*:*:*', 0, '三段式 glob 通配全部权限，仅授予站长'),
     (2, '查看权限目录', 'API', 'system:permission:list', 1, '权限管理入口'),
@@ -543,10 +546,33 @@ INSERT INTO sys_permission (id, name, type, perm, backend_required, remark) VALU
     (16, '启停工作流', 'API', 'workflow:def:update', 1, '启用或停用工作流'),
     (17, '删除工作流', 'API', 'workflow:def:delete', 1, '删除工作流及其版本'),
     (18, '测试工作流', 'API', 'workflow:def:run', 1, '测试执行一次工作流'),
-    (19, '查看执行日志', 'API', 'workflow:log:list', 1, '工作流执行记录');
+    (19, '查看执行日志', 'API', 'workflow:log:list', 1, '工作流执行记录'),
+    (20, '查看连接', 'API', 'connection:ws:list', 1, '连接测试台入口'),
+    (21, '读取连接', 'API', 'connection:ws:read', 1, '连接详情'),
+    (22, '创建连接', 'API', 'connection:ws:create', 1, '新建连接'),
+    (23, '编辑连接', 'API', 'connection:ws:update', 1, '修改连接配置'),
+    (24, '删除连接', 'API', 'connection:ws:delete', 1, '删除连接'),
+    (25, '操作连接', 'API', 'connection:ws:operate', 1, '手动启停连接运行时');
 
--- 站长只绑这一行超级权限，以后新增权限点自动拥有
+-- 站长只绑这一行超级权限，以后新增权限点自动拥有。
+-- 用户、管理员绑具体权限，权限目录以后新增的条目**不会**自动落到他们头上 —— 这是刻意的：
+-- 新加一个高危权限点时，默认只有站长拥有，需要有人在角色授权里显式勾给其他角色。
 INSERT INTO sys_role_permission (role_id, permission_id) VALUES (3, 1);
+
+-- 用户：产品功能全量（工作流 + 连接），不含任何系统管理权限
+INSERT INTO sys_role_permission (role_id, permission_id)
+SELECT 1, id
+  FROM sys_permission
+ WHERE perm IN (
+    'workflow:def:list', 'workflow:def:save', 'workflow:def:update',
+    'workflow:def:delete', 'workflow:def:run', 'workflow:log:list',
+    'connection:ws:list', 'connection:ws:read', 'connection:ws:create',
+    'connection:ws:update', 'connection:ws:delete', 'connection:ws:operate');
+
+-- 管理员：除超级权限外的全部具体权限，用于日常运营（含系统管理）。
+-- 角色绑定本身仍是「站长专属」——管理员不能改站长的角色/权限/菜单，见 RoleRelationService。
+INSERT INTO sys_role_permission (role_id, permission_id)
+SELECT 2, id FROM sys_permission WHERE perm <> '*:*:*';
 
 -- 内置账号 → 站长
 INSERT INTO sys_user_role (user_id, role_id) VALUES (1, 3);
@@ -571,18 +597,22 @@ VALUES
      'system.menus', 'layout', NULL, 20, 1, 0, '菜单树管理'),
     (1003, 1000, 'MENU', '系统配置', 'system-config', '/system/config',
      'system.config', 'sliders', NULL, 30, 1, 0, '注册、登录、验证码等系统开关'),
-    (1100, 0, 'MENU', '连接测试台', 'connections', '/connections',
-     'connections.playground', 'network', NULL, 20, 1, 0, '创建插件连接并验证反向/正向适配器'),
     (1200, 0, 'CATALOG', '工作流', NULL, NULL, NULL, 'connection', NULL,
-     30, 1, 0, '工作流编排与执行'),
+     20, 1, 0, '工作流编排与执行'),
     (1201, 1200, 'MENU', '工作流列表', 'workflow-list', '/workflow/list',
      'workflow.list', 'list', NULL, 10, 1, 0, '工作流定义、启停与手动执行'),
     (1202, 1200, 'MENU', '执行日志', 'workflow-log', '/workflow/log',
-     'workflow.log', 'clock', NULL, 20, 1, 0, '工作流执行记录');
+     'workflow.log', 'clock', NULL, 20, 1, 0, '工作流执行记录'),
+    (1100, 0, 'MENU', '连接测试台', 'connections', '/connections',
+     'connections.playground', 'network', NULL, 30, 1, 0, '创建插件连接并验证反向/正向适配器');
 
--- 站长要能看到**目录本身**：navigation() 只纳入「父节点也可见」的条目，
--- 缺了 (3, 1000) 这一行，三个子菜单会因为父级不可见被连坐隐藏，侧边栏直接空掉。
+-- 要能看到**目录本身**：navigation() 只纳入「父节点也可见」的条目，
+-- 缺了目录那一行，它的子菜单会因为父级不可见被连坐隐藏，侧边栏直接空掉。
+-- 用户：工作流 + 连接测试台；管理员与站长：全部。
 INSERT INTO sys_role_menu (role_id, menu_id) VALUES
+    (1, 1100), (1, 1200), (1, 1201), (1, 1202),
+    (2, 1000), (2, 1001), (2, 1002), (2, 1003), (2, 1100),
+    (2, 1200), (2, 1201), (2, 1202),
     (3, 1000), (3, 1001), (3, 1002), (3, 1003), (3, 1100),
     (3, 1200), (3, 1201), (3, 1202);
 
