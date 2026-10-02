@@ -147,11 +147,18 @@ public class WorkflowController {
             @RequestParam(required = false) Long workflowId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Boolean includeTest,
+            @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long beforeId,
             @RequestParam(required = false) Integer size) {
         return Result.success(
                 executionQuery.list(
-                        CurrentUser.requireId(), workflowId, status, includeTest, beforeId, size));
+                        CurrentUser.requireId(),
+                        workflowId,
+                        status,
+                        includeTest,
+                        keyword,
+                        beforeId,
+                        size));
     }
 
     @GetMapping("/executions/{executionId}")
