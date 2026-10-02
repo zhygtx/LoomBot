@@ -111,13 +111,26 @@ const canUpdateUsers = computed(() =>
   hasPermission(session.user?.permissions, 'system:user:update'),
 )
 const canAccess = computed(() => canListRoles.value || canListUsers.value)
+const actorIsOwner = computed(() => Boolean(session.user?.roles?.includes('OWNER')))
+const ownerRoleId = computed(
+  () =>
+    roleSummaries.value.find((role) => role.code === 'OWNER')?.id ??
+    roles.value.find((role) => role.code === 'OWNER')?.id ??
+    null,
+)
 const selectedRole = computed(() => roles.value.find((role) => role.id === selectedRoleId.value))
+const selectedRoleLocked = computed(
+  () => selectedRole.value?.code === 'OWNER' && !actorIsOwner.value,
+)
 const selectedRolePermissionIds = computed<string[]>({
   get: () => selectedRole.value?.permissionIds ?? [],
   set: (ids) => {
     if (selectedRole.value) selectedRole.value.permissionIds = ids
   },
 })
+function userIsOwner(user: UserRoleRelation): boolean {
+  return Boolean(ownerRoleId.value && user.roleIds.includes(ownerRoleId.value))
+}
 const filteredUsers = computed(() => {
   const query = userQuery.value.trim().toLowerCase()
   if (!query) return users.value
@@ -305,7 +318,14 @@ function expandPatternsToConcrete(ids: string[]): string[] {
 function compressSelectionToPatterns(): string[] {
   const available = concretePermissions.value
   const selected = new Set(selectedRolePermissionIds.value)
-  if (available.length > 0 && available.every((permission) => selected.has(permission.id))) {
+  // 全局超级权限只属于站长：其他角色即使勾满也压成 module:*:* 这类模块通配，
+  // 否则「保存一次管理员角色」就会把它悄悄提权成站长。
+  const isOwnerRole = selectedRole.value?.code === 'OWNER'
+  if (
+    isOwnerRole &&
+    available.length > 0 &&
+    available.every((permission) => selected.has(permission.id))
+  ) {
     return ['*:*:*']
   }
 
@@ -340,7 +360,11 @@ function compressSelectionToPatterns(): string[] {
 }
 
 function setInitialSelection(): void {
-  if (!selectedRoleId.value) selectedRoleId.value = roles.value[0]?.id ?? null
+  if (!selectedRoleId.value) {
+    // 非站长默认不落在被锁住的 OWNER 角色上，避免一进页面就是一块灰的
+    const preferred = roles.value.find((role) => actorIsOwner.value || role.code !== 'OWNER')
+    selectedRoleId.value = preferred?.id ?? roles.value[0]?.id ?? null
+  }
   if (openGroups.value.length === 0)
     openGroups.value = permissionGroups.value.map((group) => group.key)
 }
@@ -404,7 +428,7 @@ async function switchTab(tab: AccessTab): Promise<void> {
 }
 
 async function saveRolePermissions(): Promise<void> {
-  if (!selectedRole.value || !canUpdateRoles.value) return
+  if (!selectedRole.value || !canUpdateRoles.value || selectedRoleLocked.value) return
   isSaving.value = true
   try {
     await systemApi.updateRolePermissions(selectedRole.value.id, compressSelectionToPatterns())
@@ -535,7 +559,7 @@ onMounted(async () => {
                 <h2>{{ selectedRole.name }} · 操作权限</h2>
               </div>
               <BaseButton
-                v-if="canUpdateRoles"
+                v-if="canUpdateRoles && !selectedRoleLocked"
                 size="small"
                 :loading="isSaving"
                 @click="saveRolePermissions"
@@ -543,6 +567,10 @@ onMounted(async () => {
                 保存权限
               </BaseButton>
             </div>
+
+            <BaseNotice v-if="selectedRoleLocked" tone="warning" title="仅站长可改">
+              站长角色的权限只有站长本人能调整，这里仅可查看。
+            </BaseNotice>
 
             <div class="permission-toolbar">
               <label class="system-page__filter">
@@ -568,7 +596,7 @@ onMounted(async () => {
                         selectionState(group.resources.flatMap((resource) => resource.items))
                           .indeterminate
                       "
-                      :disabled="!canUpdateRoles"
+                      :disabled="!canUpdateRoles || selectedRoleLocked"
                       :aria-label="`选择模块 ${group.key}`"
                       @change="setGroupSelection(group, eventChecked($event))"
                     />
@@ -599,7 +627,7 @@ onMounted(async () => {
                           type="checkbox"
                           :checked="selectionState(resource.items).checked"
                           :indeterminate="selectionState(resource.items).indeterminate"
-                          :disabled="!canUpdateRoles"
+                          :disabled="!canUpdateRoles || selectedRoleLocked"
                           :aria-label="`选择资源 ${resource.key}`"
                           @change="setPermissionSelection(resource.items, eventChecked($event))"
                         />
@@ -620,7 +648,7 @@ onMounted(async () => {
                             v-model="selectedRolePermissionIds"
                             type="checkbox"
                             :value="permission.id"
-                            :disabled="!canUpdateRoles"
+                            :disabled="!canUpdateRoles || selectedRoleLocked"
                           />
                           <span>{{ permission.key }}</span>
                         </label>
@@ -664,6 +692,9 @@ onMounted(async () => {
               >{{ filteredUsers.length }} 位用户 · {{ changedUsers.length }} 项待保存</span
             >
           </div>
+          <BaseNotice v-if="canUpdateUsers && !actorIsOwner" tone="warning" title="站长保护">
+            只有站长可以分配站长角色，站长用户的角色与启停也仅站长本人可改。
+          </BaseNotice>
           <div v-if="users.length" class="user-role-table-wrap">
             <div
               class="user-role-table"
@@ -684,7 +715,7 @@ onMounted(async () => {
                     <input
                       v-model="user.enabled"
                       type="checkbox"
-                      :disabled="!canUpdateUsers"
+                      :disabled="!canUpdateUsers || (!actorIsOwner && userIsOwner(user))"
                       :aria-label="`${user.email} 的启用状态`"
                     />
                   </label>
@@ -693,12 +724,25 @@ onMounted(async () => {
                     <small>{{ user.enabled ? '已启用' : '已停用' }}</small>
                   </div>
                 </div>
-                <label v-for="role in roleSummaries" :key="role.id" class="user-role-table__check">
+                <label
+                  v-for="role in roleSummaries"
+                  :key="role.id"
+                  class="user-role-table__check"
+                  :title="
+                    !actorIsOwner && (role.code === 'OWNER' || userIsOwner(user))
+                      ? '只有站长可以分配站长角色'
+                      : undefined
+                  "
+                >
                   <input
                     v-model="user.roleIds"
                     type="checkbox"
                     :value="role.id"
-                    :disabled="!canUpdateUsers || !user.enabled"
+                    :disabled="
+                      !canUpdateUsers ||
+                      !user.enabled ||
+                      (!actorIsOwner && (role.code === 'OWNER' || userIsOwner(user)))
+                    "
                   />
                   <span>{{ role.code }}</span>
                 </label>

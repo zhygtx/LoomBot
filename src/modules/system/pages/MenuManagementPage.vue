@@ -91,6 +91,7 @@ const canUpdateRoleMenus = computed(() =>
   hasPermission(session.user?.permissions, 'system:role:update'),
 )
 const canAccess = computed(() => canList.value || canListRoleMenus.value)
+const actorIsOwner = computed(() => Boolean(session.user?.roles?.includes('OWNER')))
 
 const structureTree = computed(() => buildTree(menus.value))
 const assignmentTree = computed(() =>
@@ -102,6 +103,9 @@ const assignmentRows = computed(() =>
 
 const selectedRole = computed(() =>
   roleMenus.value.find((role) => role.id === selectedRoleId.value),
+)
+const selectedRoleLocked = computed(
+  () => selectedRole.value?.code === 'OWNER' && !actorIsOwner.value,
 )
 const selectedRoleMenuIds = computed<string[]>({
   get: () => selectedRole.value?.menuIds ?? [],
@@ -393,7 +397,11 @@ async function loadAssignment(): Promise<void> {
     roleMenus.value = nextRoles
     assignmentMenus.value = nextMenus
     loadedAssignment.value = true
-    if (!selectedRoleId.value) selectedRoleId.value = roleMenus.value[0]?.id ?? null
+    if (!selectedRoleId.value) {
+      // 非站长默认落在一个可编辑的角色上，而不是被锁住的 OWNER
+      const preferred = roleMenus.value.find((role) => actorIsOwner.value || role.code !== 'OWNER')
+      selectedRoleId.value = preferred?.id ?? roleMenus.value[0]?.id ?? null
+    }
     if (openMenuGroups.value.length === 0) {
       openMenuGroups.value = buildTree(nextMenus)
         .filter((node) => node.children.length)
@@ -638,7 +646,7 @@ function handleMenuChange(node: MenuNode, event: Event): void {
 }
 
 async function saveRoleMenus(): Promise<void> {
-  if (!selectedRole.value || !canUpdateRoleMenus.value) return
+  if (!selectedRole.value || !canUpdateRoleMenus.value || selectedRoleLocked.value) return
   isSaving.value = true
   try {
     await systemApi.updateRoleMenus(selectedRole.value.id, selectedRoleMenuIds.value)
@@ -1193,7 +1201,7 @@ onMounted(async () => {
                 <h2>{{ selectedRole.name }} · 可见菜单</h2>
               </div>
               <BaseButton
-                v-if="canUpdateRoleMenus"
+                v-if="canUpdateRoleMenus && !selectedRoleLocked"
                 size="small"
                 :loading="isSaving"
                 @click="saveRoleMenus"
@@ -1201,6 +1209,9 @@ onMounted(async () => {
                 保存菜单
               </BaseButton>
             </div>
+            <BaseNotice v-if="selectedRoleLocked" tone="warning" title="仅站长可改">
+              站长角色的可见菜单只有站长本人能调整，这里仅可查看。
+            </BaseNotice>
             <div class="menu-assignment__hint">
               勾选页面或目录。选择子菜单时，保存会自动保留它所需的父级目录。
             </div>
@@ -1224,7 +1235,7 @@ onMounted(async () => {
                 <input
                   type="checkbox"
                   :checked="isMenuSelected(row.node.id)"
-                  :disabled="!canUpdateRoleMenus"
+                  :disabled="!canUpdateRoleMenus || selectedRoleLocked"
                   @change="handleMenuChange(row.node, $event)"
                 />
                 <span class="menu-assignment__copy">
