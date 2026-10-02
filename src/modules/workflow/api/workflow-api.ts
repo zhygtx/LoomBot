@@ -173,6 +173,8 @@ export interface ExecutionListQuery {
   workflowId?: string
   status?: string
   includeTest?: boolean
+  /** 内容关键词：匹配节点的输入输出、事件摘要和错误信息。 */
+  keyword?: string
   beforeId?: string
   size?: number
 }
