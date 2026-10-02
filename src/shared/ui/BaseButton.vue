@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-type ButtonAppearance = 'primary' | 'secondary' | 'ghost' | 'danger'
+type ButtonAppearance = 'primary' | 'secondary' | 'ghost' | 'success' | 'warning' | 'danger'
 type ButtonSize = 'small' | 'medium' | 'large'
 
 const props = withDefaults(
@@ -120,6 +120,24 @@ const isDisabled = computed(() => props.disabled || props.loading)
 .base-button--danger {
   background: var(--sys-color-danger);
   color: var(--sys-color-on-danger);
+}
+
+.base-button--success {
+  background: var(--sys-color-success-text);
+  color: var(--sys-color-surface-raised);
+}
+
+.base-button--success:not(:disabled):hover {
+  background: color-mix(in srgb, var(--sys-color-success-text) 86%, var(--sys-color-text));
+}
+
+.base-button--warning {
+  background: var(--sys-color-warning-text);
+  color: var(--sys-color-surface-raised);
+}
+
+.base-button--warning:not(:disabled):hover {
+  background: color-mix(in srgb, var(--sys-color-warning-text) 86%, var(--sys-color-text));
 }
 
 .base-button__loader {

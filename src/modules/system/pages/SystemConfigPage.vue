@@ -16,6 +16,16 @@ const GROUP_LABELS: Record<string, string> = {
   CONNECTION: '连接',
   DEPLOY: '部署',
   SYSTEM: '系统',
+  WORKFLOW: '工作流',
+}
+
+/** 字段名的中文标签；没登记的按原样显示 JSON 里的键名。 */
+const FIELD_LABELS: Record<string, string> = {
+  days: '天数',
+}
+
+function fieldLabel(key: string): string {
+  return FIELD_LABELS[key] ?? key
 }
 
 /** JSON 数字语法（不含前导零），用来在本地先挡一道，避免把 JSON 不认的数字发出去。 */
@@ -130,8 +140,20 @@ const groups = computed(() => {
     .map(([key, items]) => ({ key, label: GROUP_LABELS[key] ?? key, items }))
 })
 
+/**
+ * 两边都规范化成紧凑 JSON 再比。
+ *
+ * <p>直接比字符串会把「库里有空格、前端序列化没空格」当成改动：种子数据是手写的
+ * `{"enabled": true}`，而 `JSON.stringify` 产出 `{"enabled":true}`，于是一进页面所有配置
+ * 都标成「未保存」。比较的是值，不是文本排版。
+ */
+function normalize(text: string): string {
+  const parsed = parseObject(text)
+  return parsed ? JSON.stringify(parsed) : text.trim()
+}
+
 function isChanged(row: ConfigRow): boolean {
-  return row.json !== row.config.configValue.trim()
+  return row.json !== normalize(row.config.configValue)
 }
 
 const changedRows = computed(() => rows.value.filter(isChanged))
@@ -337,7 +359,7 @@ onMounted(loadConfigs)
                     </template>
 
                     <template v-else-if="field.kind === 'number'">
-                      <span class="config-field__label">{{ field.key }}</span>
+                      <span class="config-field__label">{{ fieldLabel(field.key) }}</span>
                       <input
                         class="config-field__input config-field__input--number"
                         type="text"
@@ -357,7 +379,7 @@ onMounted(loadConfigs)
                     </template>
 
                     <template v-else-if="field.kind === 'string'">
-                      <span class="config-field__label">{{ field.key }}</span>
+                      <span class="config-field__label">{{ fieldLabel(field.key) }}</span>
                       <input
                         class="config-field__input"
                         type="text"
@@ -377,7 +399,7 @@ onMounted(loadConfigs)
 
                     <!-- 认不出的嵌套结构：给一个 JSON 编辑框，而不是假装能编辑 -->
                     <template v-else>
-                      <span class="config-field__label">{{ field.key }}</span>
+                      <span class="config-field__label">{{ fieldLabel(field.key) }}</span>
                       <textarea
                         class="config-field__json"
                         rows="3"

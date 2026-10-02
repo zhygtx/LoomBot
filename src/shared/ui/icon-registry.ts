@@ -2,10 +2,13 @@ import type { Component } from 'vue'
 
 import {
   ArrowUpRight,
+  Cable,
   CircleUserRound,
+  Clock,
   House,
   KeyRound,
   LayoutDashboard,
+  List,
   LogOut,
   Menu,
   Network,
@@ -20,10 +23,13 @@ import {
 
 const ICONS: Record<string, Component> = {
   arrow: ArrowUpRight,
+  clock: Clock,
+  connection: Cable,
   dashboard: LayoutDashboard,
   home: House,
   key: KeyRound,
   layout: LayoutDashboard,
+  list: List,
   logout: LogOut,
   menu: Menu,
   network: Network,
@@ -48,10 +54,13 @@ export const iconKeys = Object.keys(ICONS) as IconKey[]
 /** 图标 key 的中文名，只用于选择器的标题与无障碍标签。 */
 export const iconLabels: Record<IconKey, string> = {
   arrow: '外链',
+  clock: '时间',
+  connection: '连接',
   dashboard: '仪表盘',
   home: '首页',
   key: '密钥',
   layout: '布局',
+  list: '列表',
   logout: '退出',
   menu: '菜单',
   network: '网络',

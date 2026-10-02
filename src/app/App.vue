@@ -7,7 +7,7 @@ import { MessageHost } from '@shared/ui'
 import AppShell from './layout/AppShell.vue'
 
 const route = useRoute()
-const showShell = computed(() => Boolean(route.meta.requiresAuth))
+const showShell = computed(() => Boolean(route.meta.requiresAuth) && !route.meta.standalone)
 </script>
 
 <template>

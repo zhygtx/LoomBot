@@ -5,7 +5,7 @@
 计划中的一级模块：
 
 - `auth`：登录、注册、找回密码和当前用户；
-- `connections`：WebSocket 链接管理；
+- `connections`：连接测试台，按需请求后端连接类型接口，按 `pluginVersionId + adapterType` 动态配置并查看运行状态；
 - `system`：系统配置、后端权限清单，后续用户与角色管理；
 - `foundation`：仅用于初始化阶段展示架构约束，业务开发开始后可删除。
 

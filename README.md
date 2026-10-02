@@ -13,6 +13,7 @@ npm run dev
 
 ```dotenv
 VITE_DEV_API_TARGET=http://localhost:8080
+VITE_BACKEND_WS_ORIGIN=ws://localhost:8080
 ```
 
 ## 常用命令
