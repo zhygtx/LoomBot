@@ -7,10 +7,8 @@ import com.loom.plugin.domain.PluginVersion;
 import com.loom.plugin.mapper.PluginMapper;
 import com.loom.plugin.mapper.PluginVersionMapper;
 import com.loom.workflow.WorkflowRuntimeProperties;
-import com.loom.workflow.domain.WorkflowExecution;
 import com.loom.workflow.domain.WorkflowInfo;
 import com.loom.workflow.domain.WorkflowVersion;
-import com.loom.workflow.mapper.WorkflowExecutionMapper;
 import com.loom.workflow.mapper.WorkflowInfoMapper;
 import com.loom.workflow.mapper.WorkflowVersionMapper;
 import java.time.LocalDateTime;
@@ -51,7 +49,7 @@ public class WorkflowService {
     private final WorkflowRuntimeProperties runtimeProperties;
     private final WorkflowTestClient testClient;
     private final ObjectMapper objectMapper;
-    private final WorkflowExecutionMapper executionMapper;
+    private final WorkflowExecutionCleanupService executionCleanup;
 
     public WorkflowService(
             WorkflowInfoMapper infoMapper,
@@ -64,7 +62,7 @@ public class WorkflowService {
             WorkflowRuntimeProperties runtimeProperties,
             WorkflowTestClient testClient,
             ObjectMapper objectMapper,
-            WorkflowExecutionMapper executionMapper) {
+            WorkflowExecutionCleanupService executionCleanup) {
         this.infoMapper = infoMapper;
         this.versionMapper = versionMapper;
         this.pluginVersionMapper = pluginVersionMapper;
@@ -75,7 +73,7 @@ public class WorkflowService {
         this.runtimeProperties = runtimeProperties;
         this.testClient = testClient;
         this.objectMapper = objectMapper;
-        this.executionMapper = executionMapper;
+        this.executionCleanup = executionCleanup;
     }
 
     /** 运行时按版本拉取定义所需的全部信息。 */
@@ -180,11 +178,11 @@ public class WorkflowService {
         versionMapper.delete(
                 new LambdaQueryWrapper<WorkflowVersion>()
                         .eq(WorkflowVersion::getWorkflowId, workflowId));
-        // 定义没了，执行历史也留不住：明细里的节点和版本都对应不上
-        executionMapper.delete(
-                new LambdaQueryWrapper<WorkflowExecution>()
-                        .eq(WorkflowExecution::getWorkflowId, workflowId));
+        // 定义没了，执行历史也留不住：明细里的节点和版本都对应不上。
+        // 执行记录、大内容行、落盘文件、日汇总一起清，别留下够不到的数据。
+        int executions = executionCleanup.purgeWorkflow(workflowId);
         infoMapper.deleteById(info.getId());
+        log.info("工作流已删除: id={}, 一并清理执行日志 {} 条", workflowId, executions);
     }
 
     /** 测试执行：直接调用工作流运行时，不经过 Redis 和触发索引。 */

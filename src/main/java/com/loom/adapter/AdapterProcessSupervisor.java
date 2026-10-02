@@ -14,6 +14,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -27,6 +29,11 @@ import org.springframework.stereotype.Component;
 public class AdapterProcessSupervisor {
 
     private static final Logger log = LoggerFactory.getLogger(AdapterProcessSupervisor.class);
+
+    /** 匹配适配器主机自己打的 `2026-10-02 20:49:02,639 INFO name message` 前缀。 */
+    private static final Pattern HOST_LOG_LEVEL =
+            Pattern.compile(
+                    "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}[,.]\\d{3} (TRACE|DEBUG|INFO|WARN|WARNING|ERROR|CRITICAL) ");
 
     private final AdapterProperties properties;
     private final AdapterControlClient client;
@@ -151,7 +158,7 @@ public class AdapterProcessSupervisor {
                                                     StandardCharsets.UTF_8))) {
                                 String line;
                                 while ((line = reader.readLine()) != null) {
-                                    log.info("[adapter-host] {}", line);
+                                    logHostLine(line);
                                 }
                             } catch (IOException e) {
                                 log.debug("[adapter-host] 日志读取结束: {}", e.getMessage());
@@ -160,6 +167,18 @@ public class AdapterProcessSupervisor {
                         "adapter-host-log");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    /** 按适配器主机自己报的级别转发，避免把 WARN/ERROR 一律降级成 INFO。 */
+    private void logHostLine(String line) {
+        Matcher matcher = HOST_LOG_LEVEL.matcher(line);
+        String level = matcher.find() ? matcher.group(1) : "INFO";
+        switch (level) {
+            case "TRACE", "DEBUG" -> log.debug("[adapter-host] {}", line);
+            case "WARN", "WARNING" -> log.warn("[adapter-host] {}", line);
+            case "ERROR", "CRITICAL" -> log.error("[adapter-host] {}", line);
+            default -> log.info("[adapter-host] {}", line);
+        }
     }
 
     private void watchExit(Process current) {

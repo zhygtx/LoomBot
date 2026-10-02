@@ -6,8 +6,10 @@ import com.loom.connection.domain.WsConnection;
 import com.loom.connection.mapper.WsConnectionMapper;
 import com.loom.workflow.WorkflowRuntimeProperties;
 import com.loom.workflow.domain.WorkflowExecution;
+import com.loom.workflow.domain.WorkflowExecutionPayload;
 import com.loom.workflow.domain.WorkflowInfo;
 import com.loom.workflow.mapper.WorkflowExecutionMapper;
+import com.loom.workflow.mapper.WorkflowExecutionPayloadMapper;
 import com.loom.workflow.mapper.WorkflowInfoMapper;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
@@ -29,6 +31,7 @@ import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 执行日志落库：消费 Redis 日志流，按 executionId 幂等写入 workflow_execution。
@@ -54,6 +57,8 @@ public class WorkflowExecutionLogConsumer {
     private final WorkflowExecutionMapper executionMapper;
     private final WorkflowInfoMapper infoMapper;
     private final WsConnectionMapper connectionMapper;
+    private final WorkflowExecutionPayloadMapper payloadMapper;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
     private final AtomicBoolean consuming = new AtomicBoolean(false);
     private final Map<String, Integer> failedAttempts = new ConcurrentHashMap<>();
 
@@ -62,12 +67,16 @@ public class WorkflowExecutionLogConsumer {
             WorkflowRuntimeProperties properties,
             WorkflowExecutionMapper executionMapper,
             WorkflowInfoMapper infoMapper,
-            WsConnectionMapper connectionMapper) {
+            WsConnectionMapper connectionMapper,
+            WorkflowExecutionPayloadMapper payloadMapper,
+            tools.jackson.databind.ObjectMapper objectMapper) {
         this.redis = redis;
         this.properties = properties;
         this.executionMapper = executionMapper;
         this.infoMapper = infoMapper;
         this.connectionMapper = connectionMapper;
+        this.payloadMapper = payloadMapper;
+        this.objectMapper = objectMapper;
     }
 
     @PostConstruct
@@ -162,13 +171,60 @@ public class WorkflowExecutionLogConsumer {
         entity.setCreatedDate(toDateTime(startMs).toLocalDate());
         try {
             executionMapper.insert(entity);
-            return true;
         } catch (DuplicateKeyException e) {
-            // 幂等：同一条执行重复消费直接跳过
-            return true;
+            // 幂等：执行行已经在库里，继续补一次大内容（上一次可能只写了一半）
         } catch (RuntimeException e) {
             log.error("写入执行日志失败: execution={}", executionId, e);
             return false;
+        }
+        try {
+            persistPayloads(
+                    executionId, entity.getOwnerUserId(), startMs, text(values, "payloads"));
+        } catch (RuntimeException e) {
+            log.error("写入执行日志的大内容失败: execution={}", executionId, e);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * 大内容单独一张表，正文不截断。
+     *
+     * <p>日志详情里只带 `{ref, size, sha256, preview}` 标记，前端点开才按 ref 来取；二进制/文件走 artifact 目录，不经过这里。
+     */
+    private void persistPayloads(
+            String executionId, Long ownerUserId, long startMs, String payloadsJson) {
+        if (payloadsJson == null || payloadsJson.isBlank()) {
+            return;
+        }
+        JsonNode array;
+        try {
+            array = objectMapper.readTree(payloadsJson);
+        } catch (RuntimeException e) {
+            log.warn("大内容字段不是合法 JSON，跳过: execution={}", executionId);
+            return;
+        }
+        for (JsonNode item : array) {
+            String ref = item.path("ref").asText("").strip();
+            String content = item.path("content").asText("");
+            if (ref.isEmpty() || content.isEmpty()) {
+                continue;
+            }
+            WorkflowExecutionPayload row = new WorkflowExecutionPayload();
+            row.setId(IdWorker.getId());
+            row.setExecutionId(executionId);
+            row.setOwnerUserId(ownerUserId);
+            row.setPayloadRef(ref);
+            row.setContentType(item.path("contentType").asText("text/plain"));
+            row.setSize(item.path("size").asLong(content.length()));
+            row.setSha256(item.path("sha256").asText(""));
+            row.setContent(content);
+            row.setCreatedDate(toDateTime(startMs).toLocalDate());
+            try {
+                payloadMapper.insert(row);
+            } catch (DuplicateKeyException e) {
+                // 幂等：同一条大内容重复消费直接跳过
+            }
         }
     }
 

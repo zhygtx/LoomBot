@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import hashlib
 import json
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from system.scanner.signature import describe_parameters
@@ -33,25 +36,122 @@ STATUS_SUCCESS = "SUCCESS"
 STATUS_TIMEOUT = "TIMEOUT"
 STATUS_FAILED = "FAILED"
 
-MAX_VALUE_CHARS = 4096
+# 内联进 detail_json 的上限；超过就走引用，内容原样交给 Java 落库/落盘，不截断。
+MAX_INLINE_CHARS = 4096
+# 引用标记里留的预览长度：够看清是什么，又不至于把 detail_json 撑大。
+PREVIEW_CHARS = 200
+# 单条大内容的硬上限，超过只留元信息（防止一次误传把整条链路打爆）。
+MAX_PAYLOAD_CHARS = 4 * 1024 * 1024
 
 
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def truncate_value(value: Any) -> Any:
-    """把任意值编码成可落库的紧凑结构。"""
+@dataclass
+class PayloadStore:
+    """一次执行里的大内容暂存。
+
+    - 大文本：完整内容放进 `payloads`，随执行日志一起交给 Java 落表；
+    - 二进制/文件：直接写到 artifact 目录，日志里只留引用，Java 按引用提供下载。
+
+    两条路都不截断内容，日志里只放一个几百字符的引用标记；前端拿到引用先不请求，
+    用户点开时才去取。
+    """
+
+    execution_id: str
+    artifact_dir: Path | None = None
+    payloads: list[dict[str, Any]] = field(default_factory=list)
+    _next: int = 0
+
+    def _ref(self, prefix: str) -> str:
+        self._next += 1
+        return f"{prefix}{self._next}"
+
+    def add_text(self, text: str, content_type: str, size: int, digest: str, preview: str) -> str:
+        ref = self._ref("p")
+        self.payloads.append(
+            {
+                "ref": ref,
+                "kind": "text",
+                "contentType": content_type,
+                "size": size,
+                "sha256": digest,
+                "content": text,
+            }
+        )
+        return ref
+
+    def add_file(self, raw: bytes, file_name: str, content_type: str) -> str:
+        ref = self._ref("f")
+        stored = f"{ref}-{file_name}" if file_name else f"{ref}.bin"
+        if self.artifact_dir is not None:
+            target_dir = self.artifact_dir / self.execution_id
+            target_dir.mkdir(parents=True, exist_ok=True)
+            (target_dir / stored).write_bytes(raw)
+        return stored
+
+
+def encode_value(value: Any, store: PayloadStore | None = None) -> Any:
+    """把节点输入/输出编码进日志。超限内容转成引用，不截断。"""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return _encode_binary(bytes(value), store)
     try:
-        text = json.dumps(value, ensure_ascii=False, default=str)
+        text = json.dumps(value, ensure_ascii=False, default=_jsonable)
     except (TypeError, ValueError):
         text = str(value)
-    if len(text) > MAX_VALUE_CHARS:
-        return {"truncated": True, "preview": text[:MAX_VALUE_CHARS]}
-    try:
-        return json.loads(text)
-    except (TypeError, ValueError):
-        return text
+    if len(text) <= MAX_INLINE_CHARS:
+        try:
+            return json.loads(text)
+        except (TypeError, ValueError):
+            return text
+    digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+    marker: dict[str, Any] = {
+        "truncated": True,
+        "kind": "text",
+        "type": type(value).__name__,
+        "size": len(text),
+        "sha256": digest,
+        "preview": text[:PREVIEW_CHARS],
+    }
+    if len(text) > MAX_PAYLOAD_CHARS:
+        # 太大就不搬了，但要明确标出来，别让人以为日志里就是全部
+        marker["contentOmitted"] = True
+        return marker
+    if store is None:
+        return marker
+    marker["ref"] = store.add_text(
+        text, "application/json", len(text), digest, marker["preview"]
+    )
+    return marker
+
+
+def _encode_binary(raw: bytes, store: PayloadStore | None) -> dict[str, Any]:
+    digest = hashlib.sha256(raw).hexdigest()
+    marker: dict[str, Any] = {
+        "truncated": True,
+        "kind": "file",
+        "type": "bytes",
+        "size": len(raw),
+        "sha256": digest,
+        "contentType": "application/octet-stream",
+    }
+    if len(raw) > MAX_PAYLOAD_CHARS:
+        marker["contentOmitted"] = True
+        return marker
+    if store is None:
+        return marker
+    marker["fileName"] = store.add_file(raw, "", "application/octet-stream")
+    return marker
+
+
+def _jsonable(value: Any) -> Any:
+    """json.dumps 的兜底：数据类按字段展开，集合转数组，其余退回字符串。"""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    if isinstance(value, (set, frozenset, tuple)):
+        return list(value)
+    return str(value)
 
 
 def runtime_fields(
@@ -101,6 +201,7 @@ class Outcome:
     traces: list[dict[str, Any]] = field(default_factory=list)
     result_known: bool = True
     trigger: dict[str, Any] = field(default_factory=dict)
+    store: PayloadStore | None = None
 
     def detail(self) -> dict[str, Any]:
         return {
@@ -113,9 +214,22 @@ class Outcome:
 class WorkflowEngine:
     """按定义执行一次工作流。"""
 
-    def __init__(self, plugins: PluginRegistry, actions: ActionClient) -> None:
+    def __init__(
+        self,
+        plugins: PluginRegistry,
+        actions: ActionClient,
+        artifact_dir: Path | None = None,
+    ) -> None:
         self.plugins = plugins
         self.actions = actions
+        # 大内容落盘的位置；None 表示只留引用标记（开发期没配目录时的兜底）
+        self.artifact_dir = artifact_dir
+
+    def encode(self, outcome: Outcome, value: Any) -> Any:
+        """把节点的输入/输出编码进日志，超限内容转成引用。"""
+        if outcome.store is None:
+            return encode_value(value)
+        return encode_value(value, outcome.store)
 
     async def execute(
         self,
@@ -126,6 +240,10 @@ class WorkflowEngine:
         start_node_ids: list[str] | None = None,
     ) -> Outcome:
         outcome = Outcome()
+        outcome.store = PayloadStore(
+            execution_id=str(job.get("executionId") or ""),
+            artifact_dir=self.artifact_dir,
+        )
         if start_node_ids is None:
             event_node_id: str | None = str(definition.get("eventNodeId") or "")
             start_node_ids = [event_node_id]
@@ -255,8 +373,8 @@ class WorkflowEngine:
         try:
             if event_node_id is not None and node_id == event_node_id:
                 result = context.get("input") or {}
-                trace["input"] = truncate_value(node.get("config") or {})
-                trace["output"] = truncate_value(result)
+                trace["input"] = self.encode(outcome, node.get("config") or {})
+                trace["output"] = self.encode(outcome, result)
                 trace["runtimeFields"] = runtime_fields(result)
                 trace["status"] = "SUCCESS"
                 trace["endTime"] = now_ms()
@@ -267,9 +385,9 @@ class WorkflowEngine:
             connection_id = node.get("connectionId")
             if connection_id is not None and node.get("connectionType"):
                 params = self._resolve_action_params(node, context)
-                trace["input"] = truncate_value(params)
+                trace["input"] = self.encode(outcome, params)
                 result = await self.actions.call(int(connection_id), node_key, params)
-                trace["output"] = truncate_value(result)
+                trace["output"] = self.encode(outcome, result)
                 trace["runtimeFields"] = runtime_fields(result)
                 trace["status"] = "SUCCESS"
                 trace["endTime"] = now_ms()
@@ -288,7 +406,7 @@ class WorkflowEngine:
             if spec is None:
                 raise DefinitionError(f"插件版本 {plugin_version_id} 没有节点 {node_key}")
             args, kwargs, input_log = self._bind_parameters(spec.func, node, context)
-            trace["input"] = truncate_value(input_log)
+            trace["input"] = self.encode(outcome, input_log)
             ctx = ExecutionContext(
                 execution_id=str(job.get("executionId") or ""),
                 trace_id=str(job.get("traceId") or ""),
@@ -301,7 +419,7 @@ class WorkflowEngine:
                 action_caller=self.actions.call,
             )
             result = await runtime.invoke(node_key, ctx, args, kwargs)
-            trace["output"] = truncate_value(result)
+            trace["output"] = self.encode(outcome, result)
             trace["runtimeFields"] = runtime_fields(result)
             trace["status"] = "SUCCESS"
             trace["endTime"] = now_ms()

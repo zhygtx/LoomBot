@@ -1,6 +1,7 @@
 package com.loom.workflow.service;
 
 import com.loom.config.AdapterProperties;
+import com.loom.workflow.WorkflowRuntimeProperties;
 import com.loom.workflow.WorkflowWorkerProperties;
 import jakarta.annotation.PreDestroy;
 import java.io.BufferedReader;
@@ -30,13 +31,17 @@ public class WorkflowRuntimeSupervisor {
 
     private final AdapterProperties adapterProperties;
     private final WorkflowWorkerProperties workerProperties;
+    private final WorkflowRuntimeProperties runtimeProperties;
     private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
     private volatile Process process;
 
     public WorkflowRuntimeSupervisor(
-            AdapterProperties adapterProperties, WorkflowWorkerProperties workerProperties) {
+            AdapterProperties adapterProperties,
+            WorkflowWorkerProperties workerProperties,
+            WorkflowRuntimeProperties runtimeProperties) {
         this.adapterProperties = adapterProperties;
         this.workerProperties = workerProperties;
+        this.runtimeProperties = runtimeProperties;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -78,6 +83,9 @@ public class WorkflowRuntimeSupervisor {
         builder.environment().put("PYTHONUNBUFFERED", "1");
         builder.environment().put("PYTHONIOENCODING", "utf-8");
         builder.environment().put("PYTHONUTF8", "1");
+        // 大内容落盘目录：运行时按这个绝对路径写，Java 读同一目录提供下载
+        builder.environment()
+                .put("WORKFLOW_ARTIFACT_DIR", runtimeProperties.artifactsRoot().toString());
         URI testEndpoint = URI.create(workerProperties.testBaseUrl());
         if (testEndpoint.getHost() != null) {
             builder.environment().put("WORKFLOW_TEST_HOST", testEndpoint.getHost());

@@ -27,7 +27,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("workflow-worker")
 
-MAX_DETAIL_CHARS = 16 * 1024
+# detail 里只剩小值和引用标记（大内容已经单独走 payloads/落盘），所以上限可以放宽很多；
+# 这里保留的只是"整份明细实在太大"时的最后一道兜底。
+MAX_DETAIL_CHARS = 256 * 1024
 MAX_TASKS_IN_FLIGHT = 128
 
 
@@ -39,6 +41,7 @@ class WorkerHost:
         self.engine = WorkflowEngine(
             PluginRegistry(),
             ActionClient(config.adapter_base_url, config.adapter_token),
+            config.artifact_dir,
         )
         self.semaphore = asyncio.Semaphore(config.max_concurrency)
         self.test_semaphore = asyncio.Semaphore(config.max_concurrency)
@@ -165,6 +168,7 @@ class WorkerHost:
                     error_code=outcome.error_code,
                     error_message=outcome.error_message,
                     detail=detail,
+                    payloads=outcome.store.payloads if outcome.store else [],
                     start_ms=outcome.start_ms,
                     end_ms=outcome.end_ms,
                 )
@@ -231,6 +235,7 @@ class WorkerHost:
                 error_code=outcome.error_code,
                 error_message=outcome.error_message,
                 detail=outcome.detail(),
+                payloads=outcome.store.payloads if outcome.store else [],
                 start_ms=outcome.start_ms,
                 end_ms=outcome.end_ms,
             )
@@ -254,6 +259,7 @@ class WorkerHost:
         error_code: str | None,
         error_message: str | None,
         detail: dict[str, Any],
+        payloads: list[dict[str, Any]] | None = None,
         start_ms: int,
         end_ms: int,
     ) -> None:
@@ -304,6 +310,9 @@ class WorkerHost:
             "durationMs": str(max(0, end_ms - start_ms)),
             "detailJson": detail_text,
             "detailTruncated": "1" if truncated else "0",
+            # 大内容单独一条字段交给 Java 落库/落盘；detail 里只留引用标记，
+            # 前端先不请求，点了才按 ref 取。
+            "payloads": json.dumps(payloads or [], ensure_ascii=False, default=str),
         }
         try:
             await self.redis.xadd(self.config.log_stream, fields, maxlen=100000, approximate=True)

@@ -43,6 +43,13 @@ public class SystemConfigService {
     public static final String AUTH_EMAIL_CODE_ENABLED = "auth.email-code.enabled";
     public static final String AUTH_PASSWORD_RESET_ENABLED = "auth.password-reset.enabled";
 
+    /** 原始执行日志保留天数。 */
+    public static final String WORKFLOW_LOG_RETENTION_DAYS = "workflow.log.retention-days";
+
+    /** 小时汇总保留天数，比原始日志长得多。 */
+    public static final String WORKFLOW_LOG_SUMMARY_RETENTION_DAYS =
+            "workflow.log.summary-retention-days";
+
     /**
      * 值必须保持为 true 的布尔配置：key → 不允许关掉的理由。
      *
@@ -119,6 +126,43 @@ public class SystemConfigService {
             return flag != null && flag.isBoolean() && flag.booleanValue();
         }
         return false;
+    }
+
+    /**
+     * 读一个必须为正的整数配置字段（保留天数这类），读不到 / 不是数字 / 不是正数就用 {@code fallback}。
+     *
+     * <p>和 {@link #enabled(String)} 的「失败即关闭」一个道理：读路径必须容忍脏数据。这里不能用 {@link #require}，
+     * 因为那条路在配置项缺失时直接抛异常——而调用方（日志清理）希望缺了就退回配置文件里的默认值， 不该因为一条配置没种上就整个任务失败。
+     */
+    public int positiveInt(String key, String field, int fallback) {
+        Integer value = intField(key, field);
+        return value != null && value > 0 ? value : fallback;
+    }
+
+    /**
+     * 读一个非负整数配置字段，{@code 0} 的含义由调用方解释（日志汇总里表示「永久保留」）。
+     *
+     * <p>和 {@link #positiveInt} 分开，是因为 {@code 0} 在那边是非法值、在这边是合法值： 合成一个方法就得再加一个布尔开关，读起来反而更绕。
+     */
+    public int nonNegativeInt(String key, String field, int fallback) {
+        Integer value = intField(key, field);
+        return value != null && value >= 0 ? value : fallback;
+    }
+
+    /** 取配置对象里的一个整数字段；配置项缺失、值不是对象、字段缺失或不是数字都返回 null。 */
+    private Integer intField(String key, String field) {
+        SystemConfig config =
+                mapper.selectOne(
+                        Wrappers.<SystemConfig>lambdaQuery().eq(SystemConfig::getConfigKey, key));
+        if (config == null) {
+            return null;
+        }
+        JsonNode node = parse(config.getConfigValue());
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        JsonNode value = node.get(field);
+        return value != null && value.isNumber() ? value.intValue() : null;
     }
 
     @Transactional

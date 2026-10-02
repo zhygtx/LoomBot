@@ -375,19 +375,46 @@ CREATE TABLE workflow_execution (
     KEY idx_workflow_execution_cleanup (created_date)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '工作流执行主记录';
 
-CREATE TABLE workflow_execution_daily (
-    biz_date        DATE         NOT NULL,
-    connection_id   BIGINT       NOT NULL,
-    group_id        VARCHAR(64)  NOT NULL DEFAULT '',
-    workflow_id     BIGINT       NOT NULL,
-    total_count     BIGINT       NOT NULL DEFAULT 0,
-    success_count   BIGINT       NOT NULL DEFAULT 0,
-    timeout_count   BIGINT       NOT NULL DEFAULT 0,
-    failed_count    BIGINT       NOT NULL DEFAULT 0,
-    avg_duration_ms BIGINT       NULL,
-    update_time     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (biz_date, connection_id, group_id, workflow_id)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '工作流执行日汇总';
+-- 超内联上限的文本/JSON 原样存这里（不截断），日志详情里只留一个引用标记；
+-- 前端先不请求，用户点开某条内容时才按 (execution_id, payload_ref) 取。
+-- 二进制/文件不进库：运行时写到 artifact 目录，日志里同样是引用，Java 按引用提供下载。
+-- 生命周期跟执行记录走：先删执行记录，再按 created_date 删这里，顺带删掉执行对应的 artifact 目录。
+CREATE TABLE workflow_execution_payload (
+    id            BIGINT       NOT NULL,
+    execution_id  VARCHAR(64)  NOT NULL,
+    owner_user_id BIGINT       NOT NULL,
+    payload_ref   VARCHAR(32)  NOT NULL,
+    content_type  VARCHAR(64)  NOT NULL,
+    size          BIGINT       NOT NULL,
+    sha256        CHAR(64)     NOT NULL,
+    content       MEDIUMTEXT   NOT NULL,
+    created_date  DATE         NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_execution_payload (execution_id, payload_ref),
+    KEY idx_execution_payload_cleanup (created_date)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '执行日志里的大内容';
+
+-- 按小时汇总：原始执行日志只留 N 天，这里留得久得多，用来画长期趋势。
+-- 写入方式很关键：清理任务把「即将删除的那批执行记录」聚合进来，然后才删原始行，两步同一个事务。
+-- 所以这里的计数是**累加**的（ON DUPLICATE KEY UPDATE 用 +），同一条执行记录只会被累加一次。
+-- 存 total_duration_ms 而不是 avg_duration_ms：平均值没法增量合并，先存和，读的时候再除。
+CREATE TABLE workflow_execution_hourly (
+    -- 截断到整点，如 2026-10-03 02:00:00
+    biz_hour          DATETIME     NOT NULL,
+    owner_user_id     BIGINT       NOT NULL,
+    workflow_id       BIGINT       NOT NULL,
+    -- 没有连接来源的触发（保存并测试、定时任务）记 0，避免 NULL 参与主键
+    connection_id     BIGINT       NOT NULL DEFAULT 0,
+    trigger_type      VARCHAR(16)  NOT NULL DEFAULT '',
+    total_count       BIGINT       NOT NULL DEFAULT 0,
+    success_count     BIGINT       NOT NULL DEFAULT 0,
+    timeout_count     BIGINT       NOT NULL DEFAULT 0,
+    failed_count      BIGINT       NOT NULL DEFAULT 0,
+    total_duration_ms BIGINT       NOT NULL DEFAULT 0,
+    update_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (biz_hour, owner_user_id, workflow_id, connection_id, trigger_type),
+    KEY idx_execution_hourly_cleanup (biz_hour)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '工作流执行小时汇总';
 
 -- ---------------------------------------------------------------------------
 -- 连接与通知
@@ -573,7 +600,11 @@ INSERT INTO sys_config (id, config_key, config_value, config_group, name, descri
     (3, 'auth.email-code.enabled', '{"enabled": true}', 'AUTH', '允许发送验证码',
      '注册和找回密码验证码的总开关', 1),
     (4, 'auth.password-reset.enabled', '{"enabled": true}', 'AUTH', '允许找回密码',
-     '关闭后拒绝发送找回密码验证码和重置密码', 1);
+     '关闭后拒绝发送找回密码验证码和重置密码', 1),
+    (5, 'workflow.log.retention-days', '{"days": 7}', 'WORKFLOW', '执行日志保留天数',
+     '原始执行日志（含节点输入输出）保留多少天，清理任务每小时按这个值执行。调小能降低日志检索的扫描开销，代价是能回看的历史变短', 1),
+    (6, 'workflow.log.summary-retention-days', '{"days": 0}', 'WORKFLOW', '执行汇总保留天数',
+     '按小时汇总保留多少天，填 0 表示永久保留（默认）。汇总只有计数和耗时、不含节点内容，行数只跟工作流数量有关，留很久也很小', 1);
 
 
 -- ============================================================================

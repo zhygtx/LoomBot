@@ -137,11 +137,32 @@ class ScheduleRegistry:
                 spec=spec,
                 node_key=str(item.get("nodeKey") or "system.schedule"),
             )
+        previous = self.entries
+        current_keys = set(entries)
+        previous_keys = set(previous)
+        added = current_keys - previous_keys
+        removed = previous_keys - current_keys
+        changed = {
+            key
+            for key in current_keys & previous_keys
+            if entries[key] != previous[key]
+        }
         self.entries = entries
         self._last_fired = {
             key: value for key, value in self._last_fired.items() if key in entries
         }
-        log.info("定时触发快照已更新: %s 条", len(entries))
+        # Java 每 30 秒推一次整份快照，绝大多数时候内容没变；只在真正变化时记一条，
+        # 否则日志会被「已更新: 0 条」刷屏。
+        if added or removed or changed:
+            log.info(
+                "定时触发快照已更新: %s 条（新增 %s，移除 %s，变更 %s）",
+                len(entries),
+                len(added),
+                len(removed),
+                len(changed),
+            )
+        else:
+            log.debug("定时触发快照无变化: %s 条", len(entries))
         return len(entries)
 
     def start(self) -> None:

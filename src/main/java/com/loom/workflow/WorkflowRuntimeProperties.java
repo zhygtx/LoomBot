@@ -14,6 +14,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param logRetentionDays 执行日志与无引用定义版本的保留天数
  * @param logCleanupInterval 日志清理周期
  * @param logCleanupBatchSize 单批删除行数，避免长事务
+ * @param artifactsDir 大内容（二进制/文件）落盘目录；Java 与运行时共用同一个目录
  */
 @ConfigurationProperties(prefix = "loom.workflow.runtime")
 public record WorkflowRuntimeProperties(
@@ -24,7 +25,8 @@ public record WorkflowRuntimeProperties(
         Duration taskTtl,
         Integer logRetentionDays,
         Duration logCleanupInterval,
-        Integer logCleanupBatchSize) {
+        Integer logCleanupBatchSize,
+        String artifactsDir) {
 
     public WorkflowRuntimeProperties {
         taskStreamKey =
@@ -56,5 +58,14 @@ public record WorkflowRuntimeProperties(
                 logCleanupBatchSize == null || logCleanupBatchSize <= 0
                         ? 1_000
                         : logCleanupBatchSize;
+        artifactsDir =
+                artifactsDir == null || artifactsDir.isBlank()
+                        ? "python/artifacts"
+                        : artifactsDir.strip();
+    }
+
+    /** 大内容落盘根目录的绝对路径。 */
+    public java.nio.file.Path artifactsRoot() {
+        return java.nio.file.Path.of(artifactsDir).toAbsolutePath().normalize();
     }
 }

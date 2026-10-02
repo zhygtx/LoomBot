@@ -13,9 +13,19 @@ import com.loom.workflow.mapper.WorkflowVersionMapper;
 import com.loom.workflow.service.WorkflowExecutionQueryService;
 import com.loom.workflow.service.WorkflowNodeCatalogService;
 import com.loom.workflow.service.WorkflowService;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -148,5 +158,40 @@ public class WorkflowController {
     @PreAuthorize("@permission.has(authentication, 'workflow:log:list')")
     public Result<WorkflowExecutionDetail> executionDetail(@PathVariable String executionId) {
         return Result.success(executionQuery.detail(CurrentUser.requireId(), executionId));
+    }
+
+    /**
+     * 执行时绑定的定义快照。
+     *
+     * <p>历史日志模式下画布按这份定义渲染，工作流后来被编辑过也不影响日志对位。
+     */
+    @GetMapping("/executions/{executionId}/definition")
+    @PreAuthorize("@permission.has(authentication, 'workflow:log:list')")
+    public Result<Map<String, Object>> executionDefinition(@PathVariable String executionId) {
+        return Result.success(executionQuery.definition(CurrentUser.requireId(), executionId));
+    }
+
+    /** 大内容正文：日志详情里只放引用，前端点开才来取，正文不截断。 */
+    @GetMapping("/executions/{executionId}/payloads/{ref}")
+    @PreAuthorize("@permission.has(authentication, 'workflow:log:list')")
+    public Result<String> executionPayload(
+            @PathVariable String executionId, @PathVariable String ref) {
+        return Result.success(executionQuery.payload(CurrentUser.requireId(), executionId, ref));
+    }
+
+    /** 落盘文件（图片等二进制）：日志里只有文件名，点下载才来取。 */
+    @GetMapping("/executions/{executionId}/files/{fileName}")
+    @PreAuthorize("@permission.has(authentication, 'workflow:log:list')")
+    public ResponseEntity<byte[]> executionFile(
+            @PathVariable String executionId, @PathVariable String fileName) throws IOException {
+        Path path = executionQuery.artifact(CurrentUser.requireId(), executionId, fileName);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        headers.setContentDisposition(
+                ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build());
+        // 插件返回的内容不可信：别让浏览器按内容猜类型执行
+        headers.add("X-Content-Type-Options", "nosniff");
+        headers.setCacheControl(CacheControl.noStore());
+        return new ResponseEntity<>(Files.readAllBytes(path), headers, HttpStatus.OK);
     }
 }

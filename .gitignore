@@ -48,3 +48,4 @@ __pycache__/
 .venv/
 /python/plugins/
 /python/logs/
+/python/artifacts/

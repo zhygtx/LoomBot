@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -37,12 +38,43 @@ class _SkipControlPlanePollingAccessLog(logging.Filter):
     控制面每 2 秒被轮询一次，如果照常记录访问日志会淹没连接相关的日志。
     """
 
-    _POLLED_PATHS = ("/internal/health", "/internal/observations", "/internal/runtime")
+    _POLLED_PATHS = (
+        "/internal/health",
+        "/internal/observations",
+        "/internal/runtime",
+        "/internal/schedules/snapshot",
+    )
 
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
         if isinstance(args, tuple) and len(args) >= 3:
             return not str(args[2]).startswith(self._POLLED_PATHS)
+        return True
+
+
+class _SkipWebSocketRejectionNoise(logging.Filter):
+    """丢掉未知端点握手被拒时底层库连打的三行噪音。
+
+    uvicorn 把 `uvicorn.error` 注入成 websockets 协议的 logger，所以
+    `"WebSocket <path>" 403`、`connection failed (403 Forbidden)`、
+    `connection closed` 三行都落在同一个 logger 上。前两行完全由 gateway 的
+    WARN 取代；`connection closed` 只在拒绝之后丢掉，正常连接关闭照常保留。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pending_rejections = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage().rstrip()
+        if '"WebSocket' in message and message.endswith("403"):
+            self._pending_rejections += 1
+            return False
+        if message.startswith("connection failed (403"):
+            return False
+        if message == "connection closed" and self._pending_rejections > 0:
+            self._pending_rejections -= 1
+            return False
         return True
 
 
@@ -58,7 +90,10 @@ def _take_over_uvicorn_logging() -> None:
     access.setLevel(logging.INFO)
     if not any(isinstance(item, _SkipControlPlanePollingAccessLog) for item in access.filters):
         access.addFilter(_SkipControlPlanePollingAccessLog())
-    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    error = logging.getLogger("uvicorn.error")
+    error.setLevel(logging.INFO)
+    if not any(isinstance(item, _SkipWebSocketRejectionNoise) for item in error.filters):
+        error.addFilter(_SkipWebSocketRejectionNoise())
 
 
 _take_over_uvicorn_logging()
@@ -168,10 +203,27 @@ async def action(connection_id: int, request: Request, x_adapter_token: str | No
         return {"status": "FAILED", "errorCode": "ACTION_FAILED", "errorMessage": str(exc)}
 
 
+# 同一个未知端点 5 分钟内只告警一次，避免失联的客户端把日志刷满。
+_REJECT_LOG_INTERVAL_SECONDS = 300.0
+_rejected_paths: dict[str, float] = {}
+
+
+def _log_unknown_endpoint(path: str, client: Any) -> None:
+    now = time.monotonic()
+    last = _rejected_paths.get(path)
+    if last is not None and now - last < _REJECT_LOG_INTERVAL_SECONDS:
+        log.debug("再次拒绝未知端点的 WebSocket 连接: path=%s", path)
+        return
+    _rejected_paths[path] = now
+    host = getattr(client, "host", None) or "未知来源"
+    log.warning("拒绝未知端点的 WebSocket 连接: path=%s client=%s", path, host)
+
+
 async def websocket_gateway(websocket: WebSocket, path: str) -> None:
     endpoint = "/" + path
     connection_id = supervisor.endpoint_connection(endpoint)
     if connection_id is None:
+        _log_unknown_endpoint(endpoint, websocket.client)
         await websocket.close(code=1008, reason="unknown endpoint")
         return
     await gateway.handle(websocket, connection_id)

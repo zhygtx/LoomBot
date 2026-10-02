@@ -8,6 +8,7 @@ import com.loom.workflow.domain.WorkflowVersion;
 import com.loom.workflow.mapper.WorkflowInfoMapper;
 import com.loom.workflow.mapper.WorkflowVersionMapper;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,9 @@ public class WorkflowScheduleSyncService {
     private final AdapterControlClient controlClient;
     private final ObjectMapper objectMapper;
 
+    /** 上一次成功推送的快照指纹；内容没变就不重复记日志。 */
+    private volatile String lastPushedSignature;
+
     public WorkflowScheduleSyncService(
             WorkflowInfoMapper infoMapper,
             WorkflowVersionMapper versionMapper,
@@ -58,9 +62,15 @@ public class WorkflowScheduleSyncService {
     /** 推送整份快照；幂等，适配器层整份替换。 */
     public void push() {
         List<Map<String, Object>> schedules = collect();
+        String signature = schedules.toString();
         try {
             controlClient.pushSchedules(schedules);
-            log.debug("定时触发快照已推送: {} 条", schedules.size());
+            if (!signature.equals(lastPushedSignature)) {
+                lastPushedSignature = signature;
+                log.info("定时触发快照已推送: {} 条", schedules.size());
+            } else {
+                log.debug("定时触发快照无变化: {} 条", schedules.size());
+            }
         } catch (AdapterControlException e) {
             log.warn("推送定时触发失败，稍后自动重试: {}", e.getMessage());
         }
@@ -109,6 +119,8 @@ public class WorkflowScheduleSyncService {
                 log.warn("整理定时触发失败，跳过: workflow={} error={}", info.getId(), e.getMessage());
             }
         }
+        // 指纹按版本号排序后生成，避免数据库返回顺序抖动导致误判为「有变化」。
+        schedules.sort(Comparator.comparing(item -> (Long) item.get("workflowVersionId")));
         return schedules;
     }
 }
