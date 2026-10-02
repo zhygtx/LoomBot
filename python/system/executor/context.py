@@ -38,7 +38,10 @@ class ExecutionContext:
 class ActionClient:
     """通过适配器控制面调用平台动作。"""
 
-    def __init__(self, base_url: str, token: str, timeout: float = 30.0) -> None:
+    # 必须比适配器侧的整条链路更长（worker 35s + IPC 45s），否则又是我们先把连接掐掉，
+    # 拿到的是 httpx 的空超时错误而不是适配器给出的"平台未返回响应"。
+    # 超时阶梯：插件 echo 30s < worker 35s < supervisor 45s < 本值 55s < 前端 90s。
+    def __init__(self, base_url: str, token: str, timeout: float = 55.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
@@ -55,7 +58,10 @@ class ActionClient:
                 response.raise_for_status()
                 payload = response.json()
         except Exception as exc:  # noqa: BLE001 - 网络与控制面错误统一分类
-            raise ActionError(f"调用适配器动作失败: {exc}") from exc
+            # httpx 的超时异常 str() 是空的，只写 {exc} 会得到一句"调用适配器动作失败:"，
+            # 排查时完全看不出发生了什么，所以补上异常类型。
+            detail = str(exc).strip() or type(exc).__name__
+            raise ActionError(f"调用适配器动作失败（{type(exc).__name__}）: {detail}") from exc
         status = str(payload.get("status") or "")
         if status != "SUCCEEDED":
             raise ActionError(

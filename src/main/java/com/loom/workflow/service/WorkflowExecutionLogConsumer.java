@@ -1,15 +1,21 @@
 package com.loom.workflow.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.loom.connection.domain.WsConnection;
+import com.loom.connection.mapper.WsConnectionMapper;
 import com.loom.workflow.WorkflowRuntimeProperties;
 import com.loom.workflow.domain.WorkflowExecution;
+import com.loom.workflow.domain.WorkflowInfo;
 import com.loom.workflow.mapper.WorkflowExecutionMapper;
+import com.loom.workflow.mapper.WorkflowInfoMapper;
 import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,10 +33,10 @@ import org.springframework.stereotype.Component;
 /**
  * 执行日志落库：消费 Redis 日志流，按 executionId 幂等写入 workflow_execution。
  *
- * <p>先写 MySQL 再确认，确认后按已确认位置裁剪；Redis 崩溃时接受最近约 1 秒的日志丢失。
+ * <p>先写 MySQL 再确认，确认后裁剪流长度；Redis 崩溃时接受最近约 1 秒的日志丢失。
  *
- * <p>当前默认关闭（{@code loom.workflow.runtime.log-persist-enabled=false}）：执行日志落库留到联调之后再做， 运行时仍会把执行日志写进
- * Redis 流，需要时打开开关即可落库。
+ * <p>超限明细由运行时截断并打 `detailTruncated`；这里额外兜一层毒消息保护： 同一条记录连续写库失败到上限后，写一条只有错误摘要的降级记录并确认，
+ * 不让单条坏数据永远卡住消费组。
  */
 @Component
 @ConditionalOnProperty(name = "loom.workflow.runtime.log-persist-enabled", havingValue = "true")
@@ -40,20 +46,28 @@ public class WorkflowExecutionLogConsumer {
     private static final String GROUP = "java-execution-log";
     private static final String CONSUMER = "java-execution-log-1";
     private static final int BATCH = 50;
+    private static final int MAX_ATTEMPTS = 5;
     private static final long TRIM_MAX_LENGTH = 20_000L;
 
     private final StringRedisTemplate redis;
     private final WorkflowRuntimeProperties properties;
     private final WorkflowExecutionMapper executionMapper;
+    private final WorkflowInfoMapper infoMapper;
+    private final WsConnectionMapper connectionMapper;
     private final AtomicBoolean consuming = new AtomicBoolean(false);
+    private final Map<String, Integer> failedAttempts = new ConcurrentHashMap<>();
 
     public WorkflowExecutionLogConsumer(
             StringRedisTemplate redis,
             WorkflowRuntimeProperties properties,
-            WorkflowExecutionMapper executionMapper) {
+            WorkflowExecutionMapper executionMapper,
+            WorkflowInfoMapper infoMapper,
+            WsConnectionMapper connectionMapper) {
         this.redis = redis;
         this.properties = properties;
         this.executionMapper = executionMapper;
+        this.infoMapper = infoMapper;
+        this.connectionMapper = connectionMapper;
     }
 
     @PostConstruct
@@ -87,9 +101,21 @@ public class WorkflowExecutionLogConsumer {
                 return;
             }
             for (MapRecord<String, Object, Object> record : records) {
+                String recordId = record.getId().getValue();
                 if (persist(record.getValue())) {
-                    redis.opsForStream()
-                            .acknowledge(properties.executionLogStreamKey(), GROUP, record.getId());
+                    failedAttempts.remove(recordId);
+                    acknowledge(record);
+                    continue;
+                }
+                int attempt = failedAttempts.merge(recordId, 1, Integer::sum);
+                if (attempt >= MAX_ATTEMPTS) {
+                    failedAttempts.remove(recordId);
+                    log.error(
+                            "执行日志连续写入失败 {} 次，写入降级记录后跳过: execution={}",
+                            attempt,
+                            text(record.getValue(), "executionId"));
+                    persistDegraded(record.getValue());
+                    acknowledge(record);
                 }
             }
             redis.opsForStream().trim(properties.executionLogStreamKey(), TRIM_MAX_LENGTH, true);
@@ -100,32 +126,40 @@ public class WorkflowExecutionLogConsumer {
         }
     }
 
+    private void acknowledge(MapRecord<String, Object, Object> record) {
+        redis.opsForStream().acknowledge(properties.executionLogStreamKey(), GROUP, record.getId());
+    }
+
     private boolean persist(Map<Object, Object> values) {
         String executionId = text(values, "executionId");
         if (executionId.isEmpty()) {
             return true;
         }
+        long startMs = number(values, "startTime") == null ? 0L : number(values, "startTime");
+        long endMs = number(values, "endTime") == null ? startMs : number(values, "endTime");
         WorkflowExecution entity = new WorkflowExecution();
         entity.setId(IdWorker.getId());
         entity.setExecutionId(executionId);
         entity.setWorkflowId(number(values, "workflowId"));
+        entity.setOwnerUserId(ownerOf(number(values, "workflowId")));
         entity.setDefinitionVersion(intNumber(values, "definitionVersion"));
         entity.setConnectionId(number(values, "connectionId"));
         entity.setAdapterPluginVersionId(number(values, "adapterPluginVersionId"));
         entity.setConnectionType(text(values, "connectionType"));
-        entity.setNodeKey(text(values, "nodeKey"));
+        entity.setConnectionName(connectionNameOf(number(values, "connectionId")));
+        entity.setEventNodeKey(text(values, "eventNodeKey"));
+        entity.setEventNodeName(blankToNull(text(values, "eventNodeName")));
+        entity.setTriggerType(triggerType(values));
+        entity.setEventSummary(blankToNull(text(values, "eventSummary")));
         entity.setStatus(text(values, "status"));
         entity.setErrorCode(text(values, "errorCode"));
         entity.setErrorMessage(text(values, "errorMessage"));
         entity.setDetailJson(text(values, "detailJson"));
         entity.setDetailTruncated("1".equals(text(values, "detailTruncated")) ? 1 : 0);
-        long startMs = number(values, "startTime") == null ? 0L : number(values, "startTime");
-        long endMs = number(values, "endTime") == null ? startMs : number(values, "endTime");
         entity.setStartTime(toDateTime(startMs));
         entity.setEndTime(endMs == 0 ? null : toDateTime(endMs));
         entity.setDurationMs(number(values, "durationMs"));
         entity.setCreatedDate(toDateTime(startMs).toLocalDate());
-        entity.setGroupId(extractGroup(values));
         try {
             executionMapper.insert(entity);
             return true;
@@ -138,22 +172,73 @@ public class WorkflowExecutionLogConsumer {
         }
     }
 
-    private String extractGroup(Map<Object, Object> values) {
-        String detail = text(values, "detailJson");
-        int index = detail.indexOf("\"group_id\"");
-        if (index < 0) {
+    /** 连续失败到上限时的降级写入：保留可定位的信息，明细只放失败原因。 */
+    private void persistDegraded(Map<Object, Object> values) {
+        String executionId = text(values, "executionId");
+        if (executionId.isEmpty()) {
+            return;
+        }
+        try {
+            executionMapper.delete(
+                    new LambdaQueryWrapper<WorkflowExecution>()
+                            .eq(WorkflowExecution::getExecutionId, executionId));
+            long startMs = number(values, "startTime") == null ? 0L : number(values, "startTime");
+            WorkflowExecution entity = new WorkflowExecution();
+            entity.setId(IdWorker.getId());
+            entity.setExecutionId(executionId);
+            entity.setWorkflowId(number(values, "workflowId"));
+            entity.setOwnerUserId(ownerOf(number(values, "workflowId")));
+            entity.setDefinitionVersion(intNumber(values, "definitionVersion"));
+            entity.setConnectionId(number(values, "connectionId"));
+            entity.setConnectionType(text(values, "connectionType"));
+            entity.setConnectionName(connectionNameOf(number(values, "connectionId")));
+            entity.setEventNodeKey(text(values, "eventNodeKey"));
+            entity.setEventNodeName(blankToNull(text(values, "eventNodeName")));
+            entity.setTriggerType(triggerType(values));
+            entity.setStatus(text(values, "status").isEmpty() ? "FAILED" : text(values, "status"));
+            entity.setErrorCode(text(values, "errorCode"));
+            entity.setErrorMessage(text(values, "errorMessage"));
+            entity.setDetailJson("{\"detailUnavailable\":true}");
+            entity.setDetailTruncated(1);
+            entity.setStartTime(toDateTime(startMs));
+            entity.setEndTime(toDateTime(startMs));
+            entity.setDurationMs(0L);
+            entity.setCreatedDate(toDateTime(startMs).toLocalDate());
+            executionMapper.insert(entity);
+        } catch (RuntimeException e) {
+            log.error("写入降级执行日志也失败，放弃这条记录: execution={}", executionId, e);
+        }
+    }
+
+    private String triggerType(Map<Object, Object> values) {
+        String value = text(values, "triggerType").toUpperCase(java.util.Locale.ROOT);
+        return value.isEmpty() ? "EVENT" : value;
+    }
+
+    private Long ownerOf(Long workflowId) {
+        if (workflowId == null) {
+            return 0L;
+        }
+        WorkflowInfo info = infoMapper.selectById(workflowId);
+        // 工作流已被删除时留 0：这类记录不属于任何用户，全局日志页也查不到
+        return info == null || info.getOwnerUserId() == null ? 0L : info.getOwnerUserId();
+    }
+
+    /**
+     * 连接名快照。
+     *
+     * <p>日志是历史记录：连接之后改名或删除都不该影响它。查不到就留空（连接在落库前已被删除）， 前端按"连接已删除"降级显示，不影响这条记录其余字段。
+     */
+    private String connectionNameOf(Long connectionId) {
+        if (connectionId == null) {
             return null;
         }
-        int colon = detail.indexOf(':', index);
-        int end = detail.indexOf(',', colon);
-        if (colon < 0) {
-            return null;
-        }
-        String raw =
-                (end < 0 ? detail.substring(colon + 1) : detail.substring(colon + 1, end))
-                        .replace("\"", "")
-                        .strip();
-        return raw.isEmpty() ? null : raw;
+        WsConnection connection = connectionMapper.selectById(connectionId);
+        return connection == null ? null : connection.getName();
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     private static LocalDateTime toDateTime(long millis) {

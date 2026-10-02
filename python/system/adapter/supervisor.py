@@ -15,6 +15,10 @@ from system.adapter.protocol import MAX_MESSAGE_BYTES, message
 
 log = logging.getLogger("adapter-supervisor")
 
+# 动作调用的 IPC 等待上限（秒）。必须比 worker 的动作超时更长，见 worker_runtime
+# 里那条超时阶梯：插件 echo 30s < worker 35s < 本值 45s < executor 55s < 前端 90s。
+INVOKE_TIMEOUT_SECONDS = 45.0
+
 
 class WorkerHandle:
     def __init__(self, desired: DesiredConnection, python_command: str, event_ingress: EventIngress,
@@ -39,7 +43,7 @@ class WorkerHandle:
             self.python_command, "-m", "system.adapter.worker", "--plugin-dir", self.desired.plugin_path,
             "--entry-point", self.desired.entry_point, "--adapter-type", self.desired.connection_type,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path(__file__).resolve().parent.parent),
+            cwd=str(Path(__file__).resolve().parents[2]),
             env={**os.environ, "PYTHONUNBUFFERED": "1"})
         self.reader_task = asyncio.create_task(self._read_loop())
         self.stderr_task = asyncio.create_task(self._stderr_loop())
@@ -200,7 +204,15 @@ class AdapterSupervisor:
         worker = self.connection_workers.get(connection_id)
         if not worker:
             raise RuntimeError("连接没有对应的插件工作进程")
-        response = await worker.request("invoke", connectionId=connection_id, action=action, params=params)
+        # 必须比 worker 的动作超时（ACTION_TIMEOUT_SECONDS）长，留出 IPC 往返；
+        # 用默认的 30 秒会和动作超时同时触发，随机丢掉插件那条更准确的错误信息。
+        response = await worker.request(
+            "invoke",
+            timeout=INVOKE_TIMEOUT_SECONDS,
+            connectionId=connection_id,
+            action=action,
+            params=params,
+        )
         return response.get("result")
 
     def status(self, connection_id: int) -> dict[str, Any] | None:

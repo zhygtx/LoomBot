@@ -74,7 +74,8 @@ public enum ErrorCode {
     CONNECTION_UNAVAILABLE(600002, "连接不可用"),
     CONNECTION_TYPE_UNKNOWN(600003, "找不到已登记的适配器版本或连接类型"),
     CONNECTION_CONFIG_INVALID(600004, "连接参数不是合法的 JSON 对象"),
-    CONNECTION_TYPE_IMMUTABLE(600005, "连接类型创建后不可修改，请删除后重建");
+    CONNECTION_TYPE_IMMUTABLE(600005, "连接类型创建后不可修改，请删除后重建"),
+    CONNECTION_IN_USE(600006, "连接正在被工作流使用");
 
     private final int code;
     private final String message;

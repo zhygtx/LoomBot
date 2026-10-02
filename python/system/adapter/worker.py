@@ -23,6 +23,7 @@ class Worker:
         self.runtime: WorkerRuntime | None = None
         self.plugin_dir, self.entry_point, self.adapter_type = plugin_dir, entry_point, adapter_type
         self.stop_requested = asyncio.Event()
+        self.tasks: set[asyncio.Task[Any]] = set()
 
     async def send(self, value: dict[str, Any]) -> None:
         raw = (json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
@@ -83,8 +84,11 @@ class Worker:
             ctx = self.runtime.connections.get(int(command["connectionId"]))
             await self.send(message("reply", request_id=request_id, ok=True, observation=None if not ctx else ctx.observation.as_dict()))
         elif kind == "invoke":
-            result = await self.runtime.invoke(int(command["connectionId"]), str(command["action"]), dict(command.get("params") or {}))
-            await self.send(message("reply", request_id=request_id, ok=True, result=result))
+            # 动作要等平台回响应，而响应帧同样走这条 stdin 管道送进来。
+            # 在这里直接 await 会把命令循环堵死，平台回的帧永远读不到，只能等到超时。
+            task = asyncio.create_task(self._invoke_and_reply(request_id, command))
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
         elif kind == "session.open":
             await self.runtime.open_session(int(command["connectionId"]), str(command["sessionId"]), dict(command.get("metadata") or {}))
             await self.send(message("reply", request_id=request_id, ok=True))
@@ -100,6 +104,27 @@ class Worker:
             await self.send(message("reply", request_id=request_id, ok=True))
         else:
             raise ValueError(f"未知工作进程命令: {kind}")
+
+    async def _invoke_and_reply(self, request_id: str | None, command: dict[str, Any]) -> None:
+        """后台执行动作并回包，保证命令循环能继续读 `session.frame`。"""
+        assert self.runtime is not None
+        try:
+            result = await self.runtime.invoke(
+                int(command["connectionId"]), str(command["action"]), dict(command.get("params") or {})
+            )
+        except Exception as exc:  # noqa: BLE001 - 失败也必须回包，否则调用方只能等到超时
+            message_text = str(exc).strip() or type(exc).__name__
+            await self.send(
+                message(
+                    "reply",
+                    request_id=request_id,
+                    ok=False,
+                    errorCode="ACTION_FAILED",
+                    errorMessage=message_text,
+                )
+            )
+            return
+        await self.send(message("reply", request_id=request_id, ok=True, result=result))
 
 
 def main() -> None:

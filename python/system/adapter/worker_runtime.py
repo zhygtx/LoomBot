@@ -24,6 +24,16 @@ from system.scanner.manifest import AdapterDecl, read_manifest
 
 log = logging.getLogger("adapter-worker")
 
+# 单个平台动作的等待上限（秒）。超时不代表没执行：请求已经发到平台，
+# 只是没等到响应，所以调用方要按「结果未知」处理。
+#
+# 必须比插件里的 echo 等待（OneBotSession.request 默认 30 秒）长，
+# 否则先超时的是宿主，平台还没放弃就被判超时，插件那条更准确的
+# "平台未返回响应" 也来不及产生。整条超时阶梯：
+#   插件 echo 等待 30s  <  本值 35s  <  supervisor INVOKE_TIMEOUT 45s
+#   <  executor ActionClient 55s  <  前端 90s
+ACTION_TIMEOUT_SECONDS = 35.0
+
 
 def decode_frame(frame: Any) -> dict[str, Any] | None:
     """把平台帧解码成对象；不是对象就返回 None，由调用方丢弃。"""
@@ -318,7 +328,9 @@ class WorkerRuntime:
         ctx = self.connections.get(connection_id)
         if not ctx:
             raise RuntimeError("连接未加载")
-        return await asyncio.wait_for(self.registry.invoke(ctx, action, params), timeout=30)
+        return await asyncio.wait_for(
+            self.registry.invoke(ctx, action, params), timeout=ACTION_TIMEOUT_SECONDS
+        )
 
     async def open_session(
         self, connection_id: int, session_id: str, metadata: dict[str, Any] | None = None

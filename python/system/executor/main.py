@@ -156,6 +156,18 @@ class WorkerHost:
                 )
                 detail = outcome.detail()
                 traces = detail.get("nodes") or []
+                # 测试执行同样落日志（triggerType=TEST），否则关掉结果弹窗就查不到了。
+                await self._publish_log(
+                    job,
+                    workflow_id=int(fetched.get("workflowId") or 0),
+                    definition_version=int(fetched.get("versionNo") or 0),
+                    status=outcome.status,
+                    error_code=outcome.error_code,
+                    error_message=outcome.error_message,
+                    detail=detail,
+                    start_ms=outcome.start_ms,
+                    end_ms=outcome.end_ms,
+                )
                 return {
                     "executionId": execution_id,
                     "status": outcome.status,
@@ -195,6 +207,7 @@ class WorkerHost:
                 await self._publish_log(
                     job,
                     workflow_id=0,
+                    definition_version=0,
                     status=STATUS_FAILED,
                     error_code=exc.code,
                     error_message=exc.message,
@@ -213,6 +226,7 @@ class WorkerHost:
             await self._publish_log(
                 job,
                 workflow_id=int(fetched.get("workflowId") or 0),
+                definition_version=int(fetched.get("versionNo") or 0),
                 status=outcome.status,
                 error_code=outcome.error_code,
                 error_message=outcome.error_message,
@@ -235,6 +249,7 @@ class WorkerHost:
         job: dict[str, Any],
         *,
         workflow_id: int,
+        definition_version: int,
         status: str,
         error_code: str | None,
         error_message: str | None,
@@ -271,13 +286,16 @@ class WorkerHost:
             "executionId": job["executionId"],
             "traceId": job["traceId"],
             "workflowId": str(workflow_id),
-            "definitionVersion": str(job["workflowVersionId"]),
+            "definitionVersion": str(definition_version),
             "connectionId": "" if job["connectionId"] is None else str(job["connectionId"]),
             "adapterPluginVersionId": ""
             if job["pluginVersionId"] is None
             else str(job["pluginVersionId"]),
             "connectionType": job["connectionType"] or "",
-            "nodeKey": job["nodeKey"] or "",
+            "eventNodeKey": job["nodeKey"] or "",
+            "eventNodeName": _trigger_text(detail, "eventNodeName")[:128],
+            "triggerType": _trigger_type(job),
+            "eventSummary": _trigger_text(detail, "eventSummary")[:1024],
             "status": status,
             "errorCode": error_code or "",
             "errorMessage": (error_message or "")[:2000],
@@ -323,6 +341,23 @@ def _parse_job(fields: dict[str, Any]) -> dict[str, Any] | None:
         "event": event if isinstance(event, dict) else {},
         "deadline": optional_int(fields.get("deadline")) or 0,
     }
+
+
+def _trigger_type(job: dict[str, Any]) -> str:
+    """执行来源：定时 / 适配器事件 / 编辑器测试。"""
+    if str(job.get("nodeKey") or "") == "system.schedule":
+        return "SCHEDULE"
+    if job.get("connectionId") is not None:
+        return "EVENT"
+    return "TEST"
+
+
+def _trigger_text(detail: dict[str, Any], key: str) -> str:
+    trigger = detail.get("trigger")
+    if not isinstance(trigger, dict):
+        return ""
+    value = trigger.get(key)
+    return "" if value is None else str(value)
 
 
 def _root_node_ids(definition: dict[str, Any]) -> list[str]:

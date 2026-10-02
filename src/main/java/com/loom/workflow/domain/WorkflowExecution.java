@@ -17,13 +17,27 @@ public class WorkflowExecution {
 
     private String executionId;
     private Long workflowId;
+    private Long ownerUserId;
     private Integer definitionVersion;
     private Long connectionId;
     private Long adapterPluginVersionId;
     private String connectionType;
-    private String nodeKey;
-    private String groupId;
+
+    /** 事件节点绑定连接的名称快照。 */
+    private String connectionName;
+
+    /** 事件节点键。 */
+    private String eventNodeKey;
+
+    /** 事件节点的中文展示名快照。 */
+    private String eventNodeName;
+
+    /** EVENT / SCHEDULE / TEST。 */
+    private String triggerType;
+
+    /** 事件节点输出的摘要（截断）。 */
     private String eventSummary;
+
     private String status;
     private String errorCode;
     private String errorMessage;

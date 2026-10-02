@@ -15,6 +15,7 @@ import com.loom.connection.dto.ConnectionResponse;
 import com.loom.connection.dto.ConnectionUpdateRequest;
 import com.loom.connection.manager.ConnectionManager;
 import com.loom.connection.mapper.WsConnectionMapper;
+import com.loom.connection.usage.ConnectionUsageGuard;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
@@ -64,13 +65,18 @@ public class WsConnectionService {
 
     private final WsConnectionMapper mapper;
     private final ConnectionManager manager;
+    private final ConnectionUsageGuard usageGuard;
     private final ObjectMapper objectMapper;
     private final SecureRandom random = new SecureRandom();
 
     public WsConnectionService(
-            WsConnectionMapper mapper, ConnectionManager manager, ObjectMapper objectMapper) {
+            WsConnectionMapper mapper,
+            ConnectionManager manager,
+            ConnectionUsageGuard usageGuard,
+            ObjectMapper objectMapper) {
         this.mapper = mapper;
         this.manager = manager;
+        this.usageGuard = usageGuard;
         this.objectMapper = objectMapper;
     }
 
@@ -247,6 +253,16 @@ public class WsConnectionService {
     @Transactional
     public void delete(long id, Long operatorId) {
         requireOwned(id, operatorId);
+        List<String> usedBy = usageGuard.workflowsUsing(id, operatorId);
+        if (!usedBy.isEmpty()) {
+            throw new BusinessException(
+                    ErrorCode.CONNECTION_IN_USE,
+                    "还有 "
+                            + usedBy.size()
+                            + " 个工作流在使用这个连接："
+                            + String.join("、", usedBy)
+                            + "。请先修改或删除这些工作流。");
+        }
         if (!manager.stop(id)) {
             throw new BusinessException(
                     ErrorCode.CONNECTION_UNAVAILABLE, "Adapter 控制 API 不可达，连接未删除。恢复后再重试。");
@@ -256,7 +272,13 @@ public class WsConnectionService {
         // 注意这里确实是物理删除（没有 deleted 列了）。所以下面的 forget 不是可选项：
         // 少调一次就会留下孤儿状态投影。同步周期的清理是兜底，不是正常删除路径。
         mapper.deleteById(id);
-        afterCommit(() -> manager.forget(id));
+        afterCommit(
+                () -> {
+                    manager.forget(id);
+                    // 触发索引里还留着 (connectionId, type, nodeKey) -> 版本 的映射，
+                    // 连接没了就永远不会再被查询，不清理就是永久孤儿键
+                    usageGuard.onConnectionDeleted(id);
+                });
         log.info("连接已删除: id={}", id);
     }
 

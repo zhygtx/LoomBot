@@ -15,8 +15,12 @@ from system.scanner.errors import ScanError
 
 
 def repo_root() -> Path:
-    """本包所在仓库根目录，也是 `loom_adapter` / `loom_node` 所在目录。"""
-    return Path(__file__).resolve().parent.parent
+    """Python 侧的根目录（`python/`），也是 `loom_adapter` / `loom_node` 所在目录。
+
+    本文件在 `python/system/scanner/`，所以要往上三层；少一层会把 `python/system` 塞进 sys.path，
+    那层没有 SDK，还平白多出一个可能遮蔽标准库的搜索路径。
+    """
+    return Path(__file__).resolve().parents[2]
 
 
 def ensure_repo_on_path() -> None:

@@ -342,12 +342,20 @@ CREATE TABLE workflow_execution (
     id                       BIGINT       NOT NULL,
     execution_id             VARCHAR(64)  NOT NULL,
     workflow_id              BIGINT       NOT NULL,
+    -- 冗余所有者：全局执行日志页按用户过滤，避免每次查询都 join workflow_info
+    owner_user_id            BIGINT       NOT NULL,
     definition_version       INT          NOT NULL,
     connection_id            BIGINT       NULL,
     adapter_plugin_version_id BIGINT      NULL,
     connection_type          VARCHAR(64)  NULL,
-    node_key                 VARCHAR(128) NOT NULL,
-    group_id                 VARCHAR(64)  NULL,
+    -- 事件节点绑定连接的名称快照：连接改名或删除之后，旧日志仍然可读
+    connection_name          VARCHAR(64)  NULL,
+    event_node_key           VARCHAR(128) NOT NULL,
+    -- 触发节点的中文展示名快照：插件改名后旧日志仍显示当时的名字
+    event_node_name          VARCHAR(128) NULL,
+    -- EVENT 平台事件 / SCHEDULE 定时 / TEST 编辑器保存并测试
+    trigger_type             VARCHAR(16)  NOT NULL DEFAULT 'EVENT',
+    -- 事件节点输出的摘要（截断），完整内容在 detail_json
     event_summary            VARCHAR(1024) NULL,
     status                   VARCHAR(16)  NOT NULL,
     error_code               VARCHAR(64)  NULL,
@@ -361,6 +369,7 @@ CREATE TABLE workflow_execution (
     PRIMARY KEY (id),
     UNIQUE KEY uk_workflow_execution_id (execution_id),
     KEY idx_workflow_execution_workflow_time (workflow_id, start_time),
+    KEY idx_workflow_execution_owner_time (owner_user_id, start_time),
     KEY idx_workflow_execution_status_time (status, start_time),
     KEY idx_workflow_execution_connection_time (connection_id, start_time),
     KEY idx_workflow_execution_cleanup (created_date)

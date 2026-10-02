@@ -7,8 +7,10 @@ import com.loom.plugin.domain.PluginVersion;
 import com.loom.plugin.mapper.PluginMapper;
 import com.loom.plugin.mapper.PluginVersionMapper;
 import com.loom.workflow.WorkflowRuntimeProperties;
+import com.loom.workflow.domain.WorkflowExecution;
 import com.loom.workflow.domain.WorkflowInfo;
 import com.loom.workflow.domain.WorkflowVersion;
+import com.loom.workflow.mapper.WorkflowExecutionMapper;
 import com.loom.workflow.mapper.WorkflowInfoMapper;
 import com.loom.workflow.mapper.WorkflowVersionMapper;
 import java.time.LocalDateTime;
@@ -49,6 +51,7 @@ public class WorkflowService {
     private final WorkflowRuntimeProperties runtimeProperties;
     private final WorkflowTestClient testClient;
     private final ObjectMapper objectMapper;
+    private final WorkflowExecutionMapper executionMapper;
 
     public WorkflowService(
             WorkflowInfoMapper infoMapper,
@@ -60,7 +63,8 @@ public class WorkflowService {
             StringRedisTemplate redis,
             WorkflowRuntimeProperties runtimeProperties,
             WorkflowTestClient testClient,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            WorkflowExecutionMapper executionMapper) {
         this.infoMapper = infoMapper;
         this.versionMapper = versionMapper;
         this.pluginVersionMapper = pluginVersionMapper;
@@ -71,6 +75,7 @@ public class WorkflowService {
         this.runtimeProperties = runtimeProperties;
         this.testClient = testClient;
         this.objectMapper = objectMapper;
+        this.executionMapper = executionMapper;
     }
 
     /** 运行时按版本拉取定义所需的全部信息。 */
@@ -175,6 +180,10 @@ public class WorkflowService {
         versionMapper.delete(
                 new LambdaQueryWrapper<WorkflowVersion>()
                         .eq(WorkflowVersion::getWorkflowId, workflowId));
+        // 定义没了，执行历史也留不住：明细里的节点和版本都对应不上
+        executionMapper.delete(
+                new LambdaQueryWrapper<WorkflowExecution>()
+                        .eq(WorkflowExecution::getWorkflowId, workflowId));
         infoMapper.deleteById(info.getId());
     }
 

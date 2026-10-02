@@ -3,13 +3,14 @@ package com.loom.workflow.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.loom.common.api.Result;
 import com.loom.common.security.CurrentUser;
-import com.loom.workflow.domain.WorkflowExecution;
 import com.loom.workflow.domain.WorkflowInfo;
 import com.loom.workflow.domain.WorkflowVersion;
+import com.loom.workflow.dto.WorkflowExecutionDetail;
+import com.loom.workflow.dto.WorkflowExecutionSummary;
 import com.loom.workflow.dto.WorkflowSaveRequest;
-import com.loom.workflow.mapper.WorkflowExecutionMapper;
 import com.loom.workflow.mapper.WorkflowInfoMapper;
 import com.loom.workflow.mapper.WorkflowVersionMapper;
+import com.loom.workflow.service.WorkflowExecutionQueryService;
 import com.loom.workflow.service.WorkflowNodeCatalogService;
 import com.loom.workflow.service.WorkflowService;
 import java.util.LinkedHashMap;
@@ -35,7 +36,7 @@ public class WorkflowController {
     private final WorkflowService service;
     private final WorkflowInfoMapper infoMapper;
     private final WorkflowVersionMapper versionMapper;
-    private final WorkflowExecutionMapper executionMapper;
+    private final WorkflowExecutionQueryService executionQuery;
     private final ObjectMapper objectMapper;
     private final WorkflowNodeCatalogService nodeCatalog;
 
@@ -43,13 +44,13 @@ public class WorkflowController {
             WorkflowService service,
             WorkflowInfoMapper infoMapper,
             WorkflowVersionMapper versionMapper,
-            WorkflowExecutionMapper executionMapper,
+            WorkflowExecutionQueryService executionQuery,
             ObjectMapper objectMapper,
             WorkflowNodeCatalogService nodeCatalog) {
         this.service = service;
         this.infoMapper = infoMapper;
         this.versionMapper = versionMapper;
-        this.executionMapper = executionMapper;
+        this.executionQuery = executionQuery;
         this.objectMapper = objectMapper;
         this.nodeCatalog = nodeCatalog;
     }
@@ -125,15 +126,27 @@ public class WorkflowController {
         return Result.success(service.test(id, CurrentUser.requireId()));
     }
 
-    @GetMapping("/{id}/executions")
+    /**
+     * 执行日志：默认不含测试执行，按主键游标向前翻页。
+     *
+     * <p>编辑器里的执行日志抽屉复用同一个接口，只是固定传 `workflowId`。
+     */
+    @GetMapping("/executions")
     @PreAuthorize("@permission.has(authentication, 'workflow:log:list')")
-    public Result<List<WorkflowExecution>> executions(@PathVariable Long id) {
-        service.requireOwned(id, CurrentUser.requireId());
+    public Result<List<WorkflowExecutionSummary>> executionLog(
+            @RequestParam(required = false) Long workflowId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Boolean includeTest,
+            @RequestParam(required = false) Long beforeId,
+            @RequestParam(required = false) Integer size) {
         return Result.success(
-                executionMapper.selectList(
-                        new LambdaQueryWrapper<WorkflowExecution>()
-                                .eq(WorkflowExecution::getWorkflowId, id)
-                                .orderByDesc(WorkflowExecution::getStartTime)
-                                .last("LIMIT 50")));
+                executionQuery.list(
+                        CurrentUser.requireId(), workflowId, status, includeTest, beforeId, size));
+    }
+
+    @GetMapping("/executions/{executionId}")
+    @PreAuthorize("@permission.has(authentication, 'workflow:log:list')")
+    public Result<WorkflowExecutionDetail> executionDetail(@PathVariable String executionId) {
+        return Result.success(executionQuery.detail(CurrentUser.requireId(), executionId));
     }
 }

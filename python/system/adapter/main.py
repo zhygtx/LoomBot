@@ -17,6 +17,7 @@ from system.adapter.models import DesiredConnection
 from system.adapter.redis_bus import RedisWorkflowBus
 from system.adapter.scheduler import ScheduleRegistry
 from system.adapter.supervisor import AdapterSupervisor
+from system.adapter.worker_runtime import ACTION_TIMEOUT_SECONDS
 
 Path("logs").mkdir(exist_ok=True)
 logging.basicConfig(
@@ -153,8 +154,16 @@ async def action(connection_id: int, request: Request, x_adapter_token: str | No
     body = await request.json()
     try:
         return {"status": "SUCCEEDED", "result": await supervisor.invoke(connection_id, str(body.get("action")), dict(body.get("params") or {}))}
-    except asyncio.TimeoutError as exc:
-        return {"status": "UNKNOWN", "errorCode": "ACTION_TIMEOUT", "errorMessage": str(exc)}
+    except asyncio.TimeoutError:
+        # 超时只说明没等到平台响应，动作本身可能已经生效，所以是 UNKNOWN 而不是 FAILED。
+        return {
+            "status": "UNKNOWN",
+            "errorCode": "ACTION_TIMEOUT",
+            "errorMessage": (
+                f"平台未在 {ACTION_TIMEOUT_SECONDS:g} 秒内返回响应，动作可能已执行；"
+                "请检查平台侧是否回传了带 echo 的响应"
+            ),
+        }
     except Exception as exc:
         return {"status": "FAILED", "errorCode": "ACTION_FAILED", "errorMessage": str(exc)}
 

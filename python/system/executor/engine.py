@@ -133,8 +133,10 @@ class WorkflowEngine:
             event_node_id = None
             start_node_ids = [str(node_id) for node_id in start_node_ids]
         outcome.trigger = {
-            "nodeKey": job.get("nodeKey"),
+            "eventNodeKey": job.get("nodeKey"),
+            "eventNodeName": _node_name(definition, event_node_id),
             "connectionId": job.get("connectionId"),
+            # 先用任务里的载荷兜底；事件节点真正跑起来之后会用它的输出覆盖（见 _run_node）
             "eventSummary": _summarize(job.get("event") or {}),
         }
         try:
@@ -258,6 +260,8 @@ class WorkflowEngine:
                 trace["runtimeFields"] = runtime_fields(result)
                 trace["status"] = "SUCCESS"
                 trace["endTime"] = now_ms()
+                # 事件摘要 = 事件节点的输出内容，事件节点跑完才拿得到
+                outcome.trigger["eventSummary"] = _summarize(result)
                 return result
 
             connection_id = node.get("connectionId")
@@ -303,9 +307,15 @@ class WorkflowEngine:
             trace["endTime"] = now_ms()
             return result
         except WorkflowError as exc:
-            trace["status"] = "FAILED"
+            # 适配器动作超时只说明没等到平台响应，动作本身可能已经生效：
+            # 节点标 TIMEOUT，并且这条执行的结果按「未知」记，不能当成干净利落的失败。
+            action_timeout = exc.code == "ACTION_TIMEOUT"
+            trace["status"] = "TIMEOUT" if action_timeout else "FAILED"
             trace["endTime"] = now_ms()
             trace["error"] = exc.message
+            if action_timeout:
+                trace["resultKnown"] = False
+                outcome.result_known = False
             raise
         except Exception as exc:  # noqa: BLE001 - 插件异常带节点上下文重抛
             trace["status"] = "FAILED"
@@ -472,11 +482,24 @@ def _edge_key(edge: dict[str, Any]) -> str:
 
 
 def _summarize(event: dict[str, Any]) -> str:
+    """事件节点输出的短摘要：取第一个像文本的字段，取不到就留空。
+
+    不按平台字段名（group_id / chat_id …）猜内容：各平台不一致，猜出来的东西放进列表只会误导。
+    """
     if not isinstance(event, dict):
         return ""
     for key in ("raw_message", "content", "message", "notice_type", "request_type"):
         value = event.get(key)
         if isinstance(value, str) and value:
             return value[:200]
-    group = event.get("group_id")
-    return f"group={group}" if group else ""
+    return ""
+
+
+def _node_name(definition: dict[str, Any], node_id: str | None) -> str:
+    """触发节点的展示名；测试执行没有事件节点，返回空串。"""
+    if not node_id:
+        return ""
+    for node in definition.get("nodes") or []:
+        if str(node.get("id") or "") == node_id:
+            return str(node.get("name") or node.get("nodeKey") or "")
+    return ""
