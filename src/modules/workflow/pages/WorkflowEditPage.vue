@@ -42,6 +42,7 @@ import {
   NODE_WIDTH,
   attachDescriptor,
   catalogIdentity,
+  catalogLabel,
   connectionError,
   createNodeFromCatalog,
   edgeIdentity,
@@ -63,6 +64,7 @@ import WorkflowConnections, { type TempConnection } from '../ui/WorkflowConnecti
 import WorkflowHistoryPanel from '../ui/WorkflowHistoryPanel.vue'
 import WorkflowInspector from '../ui/WorkflowInspector.vue'
 import WorkflowNodeCard from '../ui/WorkflowNodeCard.vue'
+import WorkflowNodeBrowser from '../ui/WorkflowNodeBrowser.vue'
 import WorkflowNodeTraceCard from '../ui/WorkflowNodeTraceCard.vue'
 import WorkflowPalette from '../ui/WorkflowPalette.vue'
 import WorkflowTestResultDialog from '../ui/WorkflowTestResultDialog.vue'
@@ -128,6 +130,7 @@ const selectedId = ref<string | null>(null)
 const configNodeId = ref<string | null>(null)
 const isMobile = ref(window.matchMedia('(max-width: 56rem)').matches)
 const paletteOpen = ref(!isMobile.value)
+const browserOpen = ref(false)
 const loading = ref(true)
 const saving = ref(false)
 const loadingCatalog = ref(true)
@@ -288,11 +291,11 @@ const toggleMode = (nextMode: EditorMode): void => {
   mode.value = nextMode
 }
 
-const insertNode = (item: WorkflowNodeCatalogItem, x: number, y: number): void => {
-  if (historyMode.value) return
+const insertNode = (item: WorkflowNodeCatalogItem, x: number, y: number): boolean => {
+  if (historyMode.value) return false
   if (isEventNodeFromCatalog(item) && eventNode.value) {
     message.error('画布上只能有一个事件节点')
-    return
+    return false
   }
   if (item.connectionType) {
     if (
@@ -300,7 +303,7 @@ const insertNode = (item: WorkflowNodeCatalogItem, x: number, y: number): void =
       item.pluginVersionId !== lockedAdapterPluginVersionId.value
     ) {
       message.error('当前画布已经使用了其他协议适配器，不能混用不同适配器的节点')
-      return
+      return false
     }
     const hasConnection = connections.value.some(
       (connection) =>
@@ -310,7 +313,7 @@ const insertNode = (item: WorkflowNodeCatalogItem, x: number, y: number): void =
     )
     if (!hasConnection) {
       message.error('这个协议适配器还没有可用连接')
-      return
+      return false
     }
   }
   const node = createNodeFromCatalog(item, x, y)
@@ -318,18 +321,29 @@ const insertNode = (item: WorkflowNodeCatalogItem, x: number, y: number): void =
   selectedId.value = node.id
   historyOpen.value = false
   void nextTick(measureNodeHeights)
+  return true
 }
 
-const addNodeAtCenter = (_event: MouseEvent, item: WorkflowNodeCatalogItem): void => {
+const addNodeAtViewportCenter = (item: WorkflowNodeCatalogItem): boolean => {
   const rect = canvasRef.value?.getBoundingClientRect()
-  if (!rect) return
+  if (!rect) return false
   const offset = nodes.value.length * 18
-  insertNode(
+  return insertNode(
     item,
     (rect.width / 2 - canvas.offsetX) / canvas.scale - NODE_WIDTH / 2 + offset,
     (rect.height / 2 - canvas.offsetY) / canvas.scale - 64 + offset,
   )
+}
+
+const addNodeAtCenter = (_event: MouseEvent, item: WorkflowNodeCatalogItem): void => {
+  addNodeAtViewportCenter(item)
   if (isMobile.value) paletteOpen.value = false
+}
+
+const addNodeFromBrowser = (item: WorkflowNodeCatalogItem): void => {
+  if (addNodeAtViewportCenter(item)) {
+    message.success(`已添加到画布：${catalogLabel(item)}`)
+  }
 }
 
 const startPaletteDrag = (event: DragEvent, item: WorkflowNodeCatalogItem): void => {
@@ -702,11 +716,7 @@ const fitGraph = (): void => {
   const usableHeight = Math.max(1, rect.height - topInset - padding)
   const scale = Math.max(
     0.3,
-    Math.min(
-      1,
-      usableWidth / Math.max(1, maxX - minX),
-      usableHeight / Math.max(1, maxY - minY),
-    ),
+    Math.min(1, usableWidth / Math.max(1, maxX - minX), usableHeight / Math.max(1, maxY - minY)),
   )
   canvas.scale = scale
   canvas.offsetX = padding + usableWidth / 2 - ((minX + maxX) / 2) * scale
@@ -799,9 +809,18 @@ const hideContextMenu = (): void => {
 }
 
 const handleKeydown = (event: KeyboardEvent): void => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    if (!historyMode.value) browserOpen.value = true
+    return
+  }
   const target = event.target as HTMLElement | null
   if (target?.matches('input, textarea, select')) return
   if (event.key === 'Escape') {
+    if (browserOpen.value) {
+      browserOpen.value = false
+      return
+    }
     selectedId.value = null
     configNodeId.value = null
     historyOpen.value = false
@@ -986,9 +1005,7 @@ const openExecution = async (execution: WorkflowExecutionSummary): Promise<void>
     executionTrace.value = detail
     const definition = snapshot.definition
     if (definition) {
-      nodes.value = (definition.nodes ?? []).map((node) =>
-        attachDescriptor(node, allCatalog.value),
-      )
+      nodes.value = (definition.nodes ?? []).map((node) => attachDescriptor(node, allCatalog.value))
       edges.value = definition.edges ?? []
       if (definition.canvas) Object.assign(canvas, definition.canvas)
     } else {
@@ -1028,6 +1045,10 @@ function isEventNodeFromCatalog(item: WorkflowNodeCatalogItem): boolean {
 }
 
 watch(nodes, () => void nextTick(measureNodeHeights), { deep: true })
+
+watch(historyMode, (value) => {
+  if (value) browserOpen.value = false
+})
 
 const syncViewportMode = (): void => {
   const next = window.matchMedia('(max-width: 56rem)').matches
@@ -1177,7 +1198,9 @@ onBeforeUnmount(() => {
       <span class="workflow-execution-bar__item">
         节点 {{ executedNodeCount }}/{{ nodes.length }}
       </span>
-      <span class="workflow-execution-bar__item">v{{ executionView?.definitionVersion ?? '—' }}</span>
+      <span class="workflow-execution-bar__item"
+        >v{{ executionView?.definitionVersion ?? '—' }}</span
+      >
       <span v-if="loadingExecution" class="workflow-execution-bar__item">正在加载执行详情…</span>
       <span v-if="executionSnapshotMissing" class="workflow-execution-bar__warn">
         当时那份定义已不存在，按当前版本显示
@@ -1197,7 +1220,17 @@ onBeforeUnmount(() => {
       @start-drag="startPaletteDrag"
       @end-drag="endPaletteDrag"
       @add="addNodeAtCenter"
+      @open-browser="browserOpen = true"
       @close="paletteOpen = false"
+    />
+
+    <WorkflowNodeBrowser
+      v-if="browserOpen && !historyMode"
+      :catalog="catalog"
+      :connections="connections"
+      :locked-adapter-plugin-version-id="lockedAdapterPluginVersionId"
+      @add="addNodeFromBrowser"
+      @close="browserOpen = false"
     />
 
     <div ref="worldRef" class="workflow-world" :style="canvasWorldStyle">

@@ -140,3 +140,35 @@ export interface SystemConfigUpdate {
   key: string
   value: string
 }
+
+/**
+ * 一个插件库在后台的样子。
+ *
+ * `valid=false` 表示文件夹在、但 `repo.json` 读不出来（`key` 为 null，原因在 `error`）。
+ * 这种库会被同步器直接跳过，所以必须显示出来，藏起来只会让人以为配好了。
+ * 删除库是连文件夹带状态行一起删的，所以列表里不会出现"没有文件夹的库"。
+ */
+export interface PluginRepo {
+  key: string | null
+  folder: string | null
+  url: string | null
+  branch: string | null
+  scanner: string | null
+  valid: boolean
+  error: string | null
+  localPath: string | null
+  lastCommitHash: string | null
+  lastPullTime: string | null
+  lastScanTime: string | null
+  lastError: string | null
+}
+
+/**
+ * 声明一个插件库。身份（key）在路径上，不在这里 —— 两处都能改的话，
+ * 「改 key」到底算新建还是改名就说不清了。
+ */
+export interface PluginRepoPayload {
+  url: string
+  branch: string
+  scanner: string
+}

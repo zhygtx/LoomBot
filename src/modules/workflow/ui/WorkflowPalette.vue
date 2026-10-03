@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { Blocks, Cable, ChevronDown, ChevronRight, Search, X } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Blocks, Cable, ChevronDown, ChevronRight, Maximize2, Search, X } from '@lucide/vue'
 
 import type { ConnectionRecord } from '@modules/connections'
 
 import type { WorkflowNodeCatalog, WorkflowNodeCatalogItem } from '../api/workflow-api'
+import {
+  collectAdapterCatalogItems,
+  collectPublicCatalogItems,
+  groupCatalogItems,
+  matchesCatalogQuery,
+  type CatalogGroup,
+} from '../model/catalog'
 import {
   catalogIdentity,
   catalogLabel,
@@ -15,11 +22,8 @@ import {
 
 type PaletteKind = 'public' | 'adapter'
 
-interface NodeGroup {
-  key: string
-  title: string
-  items: WorkflowNodeCatalogItem[]
-}
+/** 假分页按插件（分组）计数，一屏先放这么多组，触底再追加。 */
+const GROUP_PAGE_SIZE = 8
 
 const props = defineProps<{
   catalog: WorkflowNodeCatalog
@@ -32,43 +36,22 @@ defineEmits<{
   'start-drag': [event: DragEvent, item: WorkflowNodeCatalogItem]
   'end-drag': []
   add: [event: MouseEvent, item: WorkflowNodeCatalogItem]
+  'open-browser': []
   close: []
 }>()
 
 const activeKind = ref<PaletteKind>('public')
 const keyword = ref('')
-const expandedGroups = ref<Set<string>>(new Set())
+/** 只允许一个分组展开；为空即全部收起。 */
+const expandedGroupKey = ref<string | null>(null)
+const visibleGroupCount = ref(GROUP_PAGE_SIZE)
+const scrollRef = ref<HTMLElement | null>(null)
+const sentinelRef = ref<HTMLElement | null>(null)
+let sentinelObserver: IntersectionObserver | null = null
 
-const publicItems = computed(() => [
-  ...props.catalog.systemNodes,
-  ...props.catalog.nodes.filter((item) => !item.connectionType),
-])
-const adapterConnectionKeys = computed(
-  () =>
-    new Set(
-      props.connections
-        .filter(
-          (connection) =>
-            connection.enabled && connection.pluginVersionId && connection.connectionType,
-        )
-        .map((connection) => `${connection.pluginVersionId}:${connection.connectionType}`),
-    ),
-)
-
+const publicItems = computed(() => collectPublicCatalogItems(props.catalog))
 const adapterItems = computed(() =>
-  props.catalog.nodes.filter((item) => {
-    if (!item.connectionType || !item.pluginVersionId) return false
-    if (!adapterConnectionKeys.value.has(`${item.pluginVersionId}:${item.connectionType}`)) {
-      return false
-    }
-    if (
-      props.lockedAdapterPluginVersionId &&
-      item.pluginVersionId !== props.lockedAdapterPluginVersionId
-    ) {
-      return false
-    }
-    return item.nodeType === 'EVENT' || item.nodeType === 'ACTION'
-  }),
+  collectAdapterCatalogItems(props.catalog, props.connections, props.lockedAdapterPluginVersionId),
 )
 const currentItems = computed(() =>
   activeKind.value === 'public' ? publicItems.value : adapterItems.value,
@@ -80,53 +63,65 @@ const emptyMessage = computed(() => {
   return '没有与现有连接匹配的适配器节点'
 })
 
-const groups = computed<NodeGroup[]>(() => {
-  const query = keyword.value.trim().toLocaleLowerCase('zh-CN')
-  const map = new Map<string, NodeGroup>()
-  for (const item of currentItems.value) {
-    if (
-      query &&
-      !`${catalogLabel(item)} ${item.description ?? ''} ${item.nodeKey} ${item.connectionType ?? ''}`
-        .toLocaleLowerCase('zh-CN')
-        .includes(query)
-    ) {
-      continue
-    }
-    const isSystem = item.nodeKey.startsWith('system.')
-    const key = isSystem ? 'system' : item.pluginKey || item.pluginVersionId || 'plugin'
-    const title = isSystem ? '系统节点' : item.pluginKey || '插件节点'
-    let group = map.get(key)
-    if (!group) {
-      group = { key, title, items: [] }
-      map.set(key, group)
-    }
-    group.items.push(item)
-  }
-  return [...map.values()]
-})
+const groups = computed<CatalogGroup[]>(() =>
+  groupCatalogItems(currentItems.value.filter((item) => matchesCatalogQuery(item, keyword.value))),
+)
 
-const toggleGroup = (key: string): void => {
-  const next = new Set(expandedGroups.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
-  expandedGroups.value = next
+const visibleGroups = computed(() => groups.value.slice(0, visibleGroupCount.value))
+const hasMoreGroups = computed(() => visibleGroupCount.value < groups.value.length)
+
+const loadMoreGroups = (): void => {
+  if (!hasMoreGroups.value) return
+  visibleGroupCount.value = Math.min(visibleGroupCount.value + GROUP_PAGE_SIZE, groups.value.length)
 }
 
-const isGroupOpen = (key: string): boolean => expandedGroups.value.has(key)
+const observeSentinel = (): void => {
+  sentinelObserver?.disconnect()
+  sentinelObserver = null
+  const sentinel = sentinelRef.value
+  if (!sentinel || !hasMoreGroups.value) return
+  sentinelObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadMoreGroups()
+    },
+    { root: scrollRef.value, rootMargin: '160px 0px' },
+  )
+  sentinelObserver.observe(sentinel)
+}
+
+const toggleGroup = (key: string): void => {
+  expandedGroupKey.value = expandedGroupKey.value === key ? null : key
+}
+
+const isGroupOpen = (key: string): boolean => expandedGroupKey.value === key
 
 const selectKind = (kind: PaletteKind): void => {
   activeKind.value = kind
 }
 
-watch(
-  groups,
-  (nextGroups) => {
-    const next = new Set(expandedGroups.value)
-    nextGroups.forEach((group) => next.add(group.key))
-    expandedGroups.value = next
-  },
-  { immediate: true },
-)
+watch(groups, (nextGroups) => {
+  if (expandedGroupKey.value && !nextGroups.some((group) => group.key === expandedGroupKey.value)) {
+    expandedGroupKey.value = null
+  }
+})
+
+/** 切换分类或搜索条件后从头分页。 */
+watch([activeKind, keyword], () => {
+  visibleGroupCount.value = GROUP_PAGE_SIZE
+})
+
+watch([visibleGroups, hasMoreGroups], () => {
+  void nextTick(observeSentinel)
+})
+
+onMounted(() => {
+  void nextTick(observeSentinel)
+})
+
+onBeforeUnmount(() => {
+  sentinelObserver?.disconnect()
+  sentinelObserver = null
+})
 </script>
 
 <template>
@@ -152,6 +147,16 @@ watch(
         @click="selectKind('adapter')"
       >
         <Cable :size="19" />
+      </button>
+      <button
+        type="button"
+        class="workflow-palette__rail-button workflow-palette__rail-button--bottom"
+        title="大屏浏览节点（Ctrl+K）"
+        aria-label="大屏浏览节点"
+        :disabled="loading"
+        @click="$emit('open-browser')"
+      >
+        <Maximize2 :size="19" />
       </button>
     </nav>
 
@@ -185,12 +190,12 @@ watch(
         <input v-model="keyword" type="search" placeholder="搜索节点" />
       </label>
 
-      <div class="workflow-palette__scroll">
+      <div ref="scrollRef" class="workflow-palette__scroll">
         <p v-if="loading" class="workflow-palette__state">正在加载节点…</p>
         <p v-else-if="!groups.length" class="workflow-palette__state">{{ emptyMessage }}</p>
 
         <template v-else>
-          <section v-for="group in groups" :key="group.key" class="workflow-palette__group">
+          <section v-for="group in visibleGroups" :key="group.key" class="workflow-palette__group">
             <button
               type="button"
               class="workflow-palette__group-head"
@@ -224,6 +229,12 @@ watch(
               </button>
             </div>
           </section>
+          <div
+            v-if="hasMoreGroups"
+            ref="sentinelRef"
+            class="workflow-palette__sentinel"
+            aria-hidden="true"
+          />
         </template>
       </div>
     </div>
@@ -282,6 +293,15 @@ watch(
   color: var(--sys-color-on-action-primary);
 }
 
+.workflow-palette__rail-button--bottom {
+  margin-block-start: auto;
+}
+
+.workflow-palette__rail-button:disabled {
+  cursor: not-allowed;
+  opacity: var(--sys-opacity-disabled);
+}
+
 .workflow-palette__content {
   display: flex;
   min-inline-size: 0;
@@ -296,6 +316,11 @@ watch(
   gap: var(--sys-space-3);
   border-block-end: 1px solid var(--sys-color-border);
   padding: var(--sys-space-4);
+}
+
+.workflow-palette__header > div:first-child {
+  min-inline-size: 0;
+  flex: 1;
 }
 
 .workflow-palette__header strong {
@@ -365,6 +390,10 @@ watch(
   color: var(--sys-color-text-muted);
   font: var(--sys-typography-caption);
   text-align: center;
+}
+
+.workflow-palette__sentinel {
+  block-size: 1px;
 }
 
 .workflow-palette__group + .workflow-palette__group {

@@ -5,6 +5,8 @@ import type {
   MenuItem,
   MenuPayload,
   MenuSortGroup,
+  PluginRepo,
+  PluginRepoPayload,
   RoleMenuRelation,
   RolePermissionRelation,
   RoleRelation,
@@ -167,5 +169,49 @@ export const systemApi = {
       url: '/system/config',
       method: 'PUT',
       data: { updates },
+    }),
+
+  /**
+   * 插件库管理。
+   *
+   * 后端写/删的就是 `python/plugins/<库>/` 那套文件夹，所以这些接口只是"遥控器"，
+   * 手工丢进去的库照样有效。写操作之后后端会异步同步一次，进度看列表里的
+   * `lastScanTime` / `lastError`。
+   */
+  listPluginRepos: () =>
+    apiRequest<PluginRepo[]>({
+      url: '/plugin/repository',
+      method: 'GET',
+    }),
+
+  savePluginRepo: (key: string, payload: PluginRepoPayload) =>
+    apiRequest<PluginRepo>({
+      url: '/plugin/repository/' + encodeURIComponent(key),
+      method: 'PUT',
+      data: payload,
+    }),
+
+  /** 上传库文件夹的配套文件：一个 zip，或单个 `.py`（如 `scanner.py`）。 */
+  uploadPluginRepoFiles: (key: string, file: File) => {
+    const data = new FormData()
+    data.append('file', file)
+    return apiRequest<PluginRepo>({
+      url: '/plugin/repository/' + encodeURIComponent(key) + '/files',
+      method: 'POST',
+      data,
+    })
+  },
+
+  deletePluginRepo: (key: string) =>
+    apiRequest<boolean>({
+      url: '/plugin/repository/' + encodeURIComponent(key),
+      method: 'DELETE',
+    }),
+
+  /** 手动触发一次同步；正在同步时会直接跳过，不会排两次。 */
+  syncPluginRepos: () =>
+    apiRequest<boolean>({
+      url: '/plugin/repository/sync',
+      method: 'POST',
     }),
 }

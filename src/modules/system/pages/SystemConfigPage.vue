@@ -9,12 +9,14 @@ import { BaseButton, BaseNotice, BaseSurface, BaseSwitch, message } from '@share
 import { useSessionStore } from '../../auth/model/session-store'
 import { systemApi } from '../api/system-api'
 import type { SystemConfig, SystemConfigUpdate } from '../model/types'
+import PluginRepoPanel from '../ui/PluginRepoPanel.vue'
 
 /** 分组 key 的中文名。认不出的分组直接显示原始 key，而不是藏起来。 */
 const GROUP_LABELS: Record<string, string> = {
   AUTH: '登录与注册',
   CONNECTION: '连接',
   DEPLOY: '部署',
+  PLUGIN: '插件库',
   SYSTEM: '系统',
   WORKFLOW: '工作流',
 }
@@ -461,6 +463,12 @@ onMounted(loadConfigs)
             </BaseButton>
           </div>
         </div>
+
+        <!--
+          插件库和 sys_config 是两回事（一个存值、一个管文件夹），所以单独一块、自己的操作按钮，
+          不并进上面那条「整页保存」。放在这里是因为站长配插件库就在配置页，不用再挂一个菜单项。
+        -->
+        <PluginRepoPanel />
       </template>
     </div>
   </main>
