@@ -13,6 +13,10 @@
   python scripts/loom_publish.py start <作者>/<key> [--library .]
       要接着改某个已发布的插件：把最新版本复制回 sources/，然后改版本号再提交。
 
+  python scripts/loom_publish.py remove <作者>/<key> <版本> [--library .]
+      撤下自己发布的某个版本：删掉版本目录并从 index.json 去掉这条记录，然后提一个只删东西的 PR。
+      机器人核对这个插件是不是你的（index.json 的 owner），是就合并；Loom 侧按「节点被删」处理。
+
 约定（三条，缺一不可）：
 
 1. **sources/ 是暂存区，不是长期源码目录。** 作者在这里提交，PR 通过后由机器人复制进
@@ -242,11 +246,23 @@ def version_sort_key(version: str) -> tuple:
 
 
 def merge_version(root: Path, *, author: str, key: str, version: str, path: str) -> None:
+    """追加一个版本条目。
+
+    条目上有两个容易混的字段：
+
+    - `namespace` 是**身份**：它拼进 plugin_key，一旦定了就不能改；
+    - `owner` 是**权限**：谁有权改这个插件（删版本、将来的转移）。首次发布时等于作者账号。
+
+    两者通常相等，分开存是因为 Gitee 账号改名、或者插件转让时，身份不该跟着变。
+    """
     data = load_index(root)
     entry = find_entry(data, author, key)
     if entry is None:
-        entry = {"key": key, "namespace": author, "versions": []}
+        entry = {"key": key, "namespace": author, "owner": author, "versions": []}
         data["plugins"].append(entry)
+    else:
+        # 老条目没写 owner 时补上（等于 namespace），别让它永远缺着
+        entry.setdefault("owner", str(entry.get("namespace") or author))
     versions = entry.setdefault("versions", [])
     if not isinstance(versions, list):
         raise PublishError(f"index.json 里 {author}/{key} 的 versions 不是数组")
@@ -263,6 +279,43 @@ def merge_version(root: Path, *, author: str, key: str, version: str, path: str)
     versions.sort(key=lambda item: version_sort_key(str(item.get("version") or "0")))
     data["plugins"].sort(key=lambda item: (str(item.get("namespace") or ""), str(item.get("key") or "")))
     save_index(root, data)
+
+
+def remove_version(root: Path, *, author: str, key: str, version: str) -> Path:
+    """删除一个已发布版本：删目录 + 从 index.json 里去掉这条版本记录。
+
+    作者要撤下自己某个版本时用这个，然后提一个**只删东西**的 PR。机器人会核对这个插件是不是
+    你的（index.json 里的 `owner`），是就合并。删掉之后 Loom 侧下一次拉取时按「节点被删」处理，
+    引用它的工作流会被标失效并摘掉触发。
+    """
+    target = root / "plugins" / author / key / version
+    if not target.is_dir():
+        raise PublishError(f"没有这个版本目录：{target.relative_to(root).as_posix()}")
+    data = load_index(root)
+    entry = find_entry(data, author, key)
+    if entry is None:
+        raise PublishError(f"index.json 里没有 {author}/{key}")
+    versions = entry.get("versions") or []
+    remaining = [
+        item
+        for item in versions
+        if not (isinstance(item, dict) and str(item.get("version") or "") == version)
+    ]
+    if len(remaining) == len(versions):
+        raise PublishError(f"index.json 里没有 {author}/{key} v{version}")
+    shutil.rmtree(target)
+    # 顺手收掉空掉的插件目录 / 作者目录，别在 plugins/ 里留一串空壳
+    for parent in (target.parent, target.parent.parent):
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+    if remaining:
+        entry["versions"] = remaining
+    else:
+        data["plugins"] = [
+            item for item in data["plugins"] if not (isinstance(item, dict) and item is entry)
+        ]
+    save_index(root, data)
+    return target
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +447,18 @@ def run_start(spec: str, *, library_root: Path) -> None:
     print(f"  → 改完记得把 plugin.toml 的 version 从 {latest.name} 往上加，再提交 PR")
 
 
+def run_remove(spec: str, version: str, *, library_root: Path) -> None:
+    """删除一个已发布版本（作者撤下自己出问题的版本时用）。"""
+    root = library_root.resolve()
+    parts = [piece for piece in spec.replace("\\", "/").split("/") if piece]
+    if len(parts) != 2:
+        raise PublishError("用法：remove <作者>/<插件键> <版本>")
+    author, key = parts
+    target = remove_version(root, author=author, key=key, version=version.strip())
+    print(f"  ✓ 已删除 {target.relative_to(root).as_posix()}/，并从 index.json 里去掉这条版本")
+    print("== 提一个只删东西的 PR；机器人核对归属后合并，Loom 侧下一个同步周期生效 ==")
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -402,7 +467,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         prog="loom_publish.py",
-        description="Loom 插件库发布脚本：check（自检）/ build（冻结并更新索引）/ start（取回最新版本继续改）",
+        description="Loom 插件库发布脚本：check（自检）/ build（冻结并更新索引）/ start（取回最新版本继续改）/ remove（删掉自己发布的版本）",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -419,6 +484,11 @@ def main() -> int:
     p_start.add_argument("spec", metavar="<作者>/<插件键>")
     p_start.add_argument("--library", metavar="<库根目录>", default=".")
 
+    p_remove = sub.add_parser("remove", help="删除一个已发布的版本（作者撤下出问题的版本）")
+    p_remove.add_argument("spec", metavar="<作者>/<插件键>")
+    p_remove.add_argument("version", metavar="<版本>")
+    p_remove.add_argument("--library", metavar="<库根目录>", default=".")
+
     args = parser.parse_args()
     try:
         if args.command == "check":
@@ -428,8 +498,10 @@ def main() -> int:
             )
         elif args.command == "build":
             run_build(Path(args.src), library_root=Path(args.apply), clean_source=args.clean_source)
-        else:
+        elif args.command == "start":
             run_start(args.spec, library_root=Path(args.library))
+        else:
+            run_remove(args.spec, args.version, library_root=Path(args.library))
     except PublishError as exc:
         print(f"\n✗ {exc}", file=sys.stderr)
         return 1

@@ -49,11 +49,14 @@ from system.plugin_market.complete import (
     write_manifest,
 )
 from system.plugin_market.gates import (
+    GateResult,
     find_plugin_dirs,
     gate_ai,
     gate_audit,
+    gate_deletion,
     gate_scope,
     gate_spec,
+    is_deletion_pr,
     read_plugin_sources,
 )
 from system.plugin_market.gitee import GiteeClient, GiteeError
@@ -301,13 +304,19 @@ def process_pull(client: GiteeClient, config: dict, state: State, log: BotLogger
 
     log.log(f"PR #{number} 开始处理：{pull.get('title') or ''}")
     files = [str(item.get("filename") or "") for item in client.list_pull_files(number)]
+    deletion = False
 
     # 拉到本地分支看代码（只读，不往 PR 分支写东西）
     branch = f"pr-{number}"
     git("fetch", "--depth", "1", "origin", f"pull/{number}/head")
     git("checkout", "-B", branch, "FETCH_HEAD")
     try:
-        result = _review_pull(client, config, log, number, files)
+        # 删除 PR 和普通 PR 的分流要在拉下来之后做：判据是 plugins/ 下的文件在分支上还在不在。
+        deletion = is_deletion_pr(files, WORK)
+        if deletion:
+            result = _review_deletion(config, log, pull, files)
+        else:
+            result = _review_pull(client, config, log, number, files)
     finally:
         git("checkout", config["repo"]["branch"])
 
@@ -319,7 +328,7 @@ def process_pull(client: GiteeClient, config: dict, state: State, log: BotLogger
         log.log(f"PR #{number} 打回")
         return
 
-    client.comment(number, _plan_comment(result))
+    client.comment(number, _deletion_plan_comment(result) if deletion else _plan_comment(result))
     if not config["gates"].get("auto_merge", True):
         state.set(number, "reviewed", head_sha, "只审不合（auto_merge=false）")
         log.log(f"PR #{number} 通过审核，但 auto_merge=false，未合并")
@@ -346,6 +355,15 @@ def process_pull(client: GiteeClient, config: dict, state: State, log: BotLogger
         )
         raise
     log.log(f"PR #{number} 已合并")
+
+    if deletion:
+        # 删除 PR 只是删掉已发布版本，没有代码要冻结发布；合并即完成。
+        # 拉一下目标分支，让后面的 PR 拿到的 before 是最新的。
+        git("fetch", "origin", config["repo"]["branch"])
+        state.set(number, "merged_no_publish", head_sha, "删除 PR（作者撤下自己的版本）")
+        log.log(f"PR #{number} 删除已生效")
+        return
+
     state.set(number, "merged", head_sha)
 
     if not config["gates"].get("auto_publish", True):
@@ -374,9 +392,7 @@ def _publish_and_report(
 
 
 def _review_pull(client, config, log: BotLogger, number: int, files: list[str]):
-    from gates import GateResult
-
-    sources_root = REPO_ROOT / "sources"
+    sources_root = WORK / "sources"
     scope = gate_scope(files, sources_root)
     if not scope.passed:
         return scope
@@ -400,11 +416,62 @@ def _review_pull(client, config, log: BotLogger, number: int, files: list[str]):
     )
 
 
+def _review_deletion(config: dict, log: BotLogger, pull: dict, files: list[str]):
+    """删除 PR 的审核：作者撤下自己的已发布版本，机器人核对归属。"""
+    if not is_deletion_pr(files, WORK):
+        return GateResult(
+            passed=False,
+            level="REJECT",
+            reasons=["删除 PR 只能删 `plugins/` 下已发布的版本目录，不能加或改别的文件。"],
+        )
+    branch = config["repo"]["branch"]
+    try:
+        before_raw = git("show", f"origin/{branch}:index.json")
+    except RuntimeError as exc:
+        return GateResult(
+            passed=False,
+            level="REJECT",
+            reasons=[f"读不到目标分支上的 `index.json`：{exc}"],
+        )
+    try:
+        before = json.loads(before_raw)
+    except ValueError as exc:
+        return GateResult(
+            passed=False,
+            level="REJECT",
+            reasons=[f"目标分支上的 `index.json` 不是合法 JSON：{exc}"],
+        )
+    try:
+        after = json.loads((WORK / "index.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return GateResult(
+            passed=False,
+            level="REJECT",
+            reasons=[f"PR 里的 `index.json` 读不了：{exc}"],
+        )
+    actor = str((pull.get("user") or {}).get("login") or "").strip()
+    result = gate_deletion(before, after, actor)
+    if result.passed:
+        log.log(f"删除 PR 审核通过：actor={actor}")
+    return result
+
+
 def _plan_comment(result) -> str:
     lines = ["## 自动审核通过", "", f"规范等级：`{result.level}`", ""]
     lines.extend(f"- {item}" for item in result.notes)
     lines.append("")
     lines.append("接下来机器人会合并、补全框架内容并发布，补全结果会在下面再评论一次。")
+    return "\n".join(lines)
+
+
+def _deletion_plan_comment(result) -> str:
+    lines = ["## 删除审核通过", "", f"审核结论：`{result.level}`", ""]
+    lines.extend(f"- {item}" for item in result.notes)
+    lines.append("")
+    lines.append(
+        "接下来机器人会合并这个 PR。Loom 侧会在下一个同步周期（默认 30 秒）拉到，"
+        "引用被删版本的工作流会被标失效并摘掉触发。"
+    )
     return "\n".join(lines)
 
 

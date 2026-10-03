@@ -6,6 +6,9 @@
 2. **规范分级**：不达标 → 打回；最低达标（可补全）→ 放行；最佳规范 → 放行。
 3. **安全扫描**：`audit.py` 出现 HIGH → 打回（静态规则，不交给 AI 放宽）。
 4. **AI 审核**：`BLOCK` → 打回；`WARN` / `OK` → 放行（只把建议写进评论）。
+
+另有一条**删除 PR** 的旁路（见 `gate_deletion`）：作者删掉自己已发布的版本（`loom_publish.py remove`
+生成的改动），机器人核对归属后合并，不发布新代码，也不走补全和安全扫描。
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ from . import audit
 from .complete import PluginScan, scan_plugin
 
 PLUGIN_MARKERS = ("nodes", "events", "actions")
+INDEX_NAME = "index.json"
+PLUGINS_DIR = "plugins"
 
 
 @dataclass
@@ -77,6 +82,130 @@ def gate_scope(changed_files: list[str], sources_root: Path) -> GateResult:
             reasons=[f"一次只能提交一个插件，这次发现 {len(plugins)} 个：{listed}"],
         )
     return GateResult(passed=True, level="OK", notes=[f"插件目录：`{plugins[0].name}`"])
+
+
+def is_deletion_pr(changed_files: list[str], work_root: Path) -> bool:
+    """这个 PR 是不是「只删已发布版本」的删除 PR。
+
+    判据：改动只落在 `index.json` 和 `plugins/` 下，且 `plugins/` 下的文件在 PR 分支上已经不存在
+    （Gitee 的文件接口不带 status，只能靠工作树里还在不在来判断是不是删除）。
+    """
+    names = [str(name or "").replace("\\", "/").strip() for name in changed_files]
+    names = [name for name in names if name]
+    if not names:
+        return False
+    touched_plugin = False
+    for name in names:
+        if name == INDEX_NAME:
+            continue
+        if not name.startswith(PLUGINS_DIR + "/"):
+            return False
+        if (work_root / name).exists():
+            return False
+        touched_plugin = True
+    return touched_plugin
+
+
+def _plugins_by_id(data: dict) -> dict[tuple[str, str], dict]:
+    result: dict[tuple[str, str], dict] = {}
+    for entry in (data or {}).get("plugins") or []:
+        if not isinstance(entry, dict):
+            continue
+        ident = (str(entry.get("namespace") or ""), str(entry.get("key") or ""))
+        result[ident] = entry
+    return result
+
+
+def _versions_by_name(entry: dict) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for item in (entry or {}).get("versions") or []:
+        if isinstance(item, dict):
+            result[str(item.get("version") or "")] = item
+    return result
+
+
+def gate_deletion(before: dict, after: dict, actor: str) -> GateResult:
+    """删除 PR 的闸门：只能删自己名下（index.json 的 `owner`）的已发布版本，且只能删、不能加或改。
+
+    `before` 是目标分支上的 index.json，`after` 是 PR 里的 index.json，都是解析好的对象。
+    `actor` 是 PR 提交人账号。
+    """
+    before_plugins = _plugins_by_id(before)
+    after_plugins = _plugins_by_id(after)
+    actor_name = str(actor or "").strip()
+    problems: list[str] = []
+    foreign: list[str] = []
+    removed = 0
+
+    added_plugins = set(after_plugins) - set(before_plugins)
+    if added_plugins:
+        problems.append(
+            "新增了插件：" + "、".join(f"`{ns}.{key}`" for ns, key in sorted(added_plugins))
+        )
+
+    for ident in sorted(set(before_plugins) & set(after_plugins)):
+        before_entry = before_plugins[ident]
+        after_entry = after_plugins[ident]
+        label = f"`{ident[0]}.{ident[1]}`"
+        before_top = {k: v for k, v in before_entry.items() if k != "versions"}
+        after_top = {k: v for k, v in after_entry.items() if k != "versions"}
+        if before_top != after_top:
+            problems.append(f"{label} 改了插件本身的字段（删除 PR 只能删版本）")
+            continue
+        before_versions = _versions_by_name(before_entry)
+        after_versions = _versions_by_name(after_entry)
+        fresh = set(after_versions) - set(before_versions)
+        if fresh:
+            problems.append(f"{label} 新增了版本：" + "、".join(sorted(fresh)))
+        for version in sorted(set(before_versions) & set(after_versions)):
+            if before_versions[version] != after_versions[version]:
+                problems.append(f"{label} v{version} 改了版本条目（删除 PR 只能删）")
+        gone = set(before_versions) - set(after_versions)
+        if gone:
+            removed += len(gone)
+            owner = str(before_entry.get("owner") or before_entry.get("namespace") or "")
+            if owner and owner != actor_name:
+                foreign.append(f"{ident[0]}.{ident[1]}")
+
+    for ident in sorted(set(before_plugins) - set(after_plugins)):
+        before_entry = before_plugins[ident]
+        removed += len(_versions_by_name(before_entry))
+        owner = str(before_entry.get("owner") or before_entry.get("namespace") or "")
+        if owner and owner != actor_name:
+            foreign.append(f"{ident[0]}.{ident[1]}")
+
+    if problems:
+        return GateResult(
+            passed=False,
+            level="REJECT",
+            reasons=["删除 PR 的改动不合法：", *problems],
+        )
+    if removed == 0:
+        return GateResult(
+            passed=False,
+            level="REJECT",
+            reasons=[
+                "这个 PR 没有删掉 `index.json` 里的任何已发布版本。",
+                "删版本请用 `python scripts/loom_publish.py remove <作者>/<插件键> <版本>`，"
+                "它会同时删掉版本目录和索引记录，然后把这个改动提上来。",
+            ],
+        )
+    if foreign:
+        return GateResult(
+            passed=False,
+            level="REJECT",
+            reasons=[
+                "只能删除自己名下的插件：这个 PR 删了 "
+                + "、".join(f"`{name}`" for name in foreign)
+                + f"，但提交人是 `{actor_name or '（未知）'}`。",
+                "要删别人的插件，请联系维护者直接改 `index.json`。",
+            ],
+        )
+    return GateResult(
+        passed=True,
+        level="DELETE",
+        notes=[f"删除 PR：`{actor_name or '（未知）'}` 删掉了 {removed} 个已发布版本"],
+    )
 
 
 def gate_spec(scan: PluginScan) -> GateResult:

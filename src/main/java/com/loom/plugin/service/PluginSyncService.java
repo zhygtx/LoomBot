@@ -263,17 +263,51 @@ public class PluginSyncService {
                                             version));
         }
         SyncBatch batch = new SyncBatch();
+        Set<VersionKey> seenVersions = new HashSet<>();
         for (PluginCatalogScanner.ScannedPlugin scanned : catalog.plugins()) {
             if (scanned.key().isBlank()) {
                 throw new IllegalArgumentException("插件库返回了缺少 key 的插件");
             }
             Plugin plugin = upsertPlugin(repository, scanned, pluginsByKey);
             for (PluginCatalogScanner.ScannedVersion version : scanned.versions()) {
+                seenVersions.add(new VersionKey(plugin.getId(), version.version()));
                 scanVersion(plugin, scanned, version, snapshot, versionsByKey, batch);
             }
         }
+        detectRemovedVersions(versionsByKey, seenVersions, batch);
         flushBatch(batch);
         pendingChanges.addAll(batch.nodeChanges);
+    }
+
+    /**
+     * 库索引里已经没有的版本：作者撤下了自己的版本（或整个插件下架）。
+     *
+     * <p>和「节点被删」走同一条链路：把这个版本现有的节点全部报成 removed，工作流侧据此标失效、 摘掉触发。行不删——工作流的失效提醒认的是 {@code
+     * plugin_version_id}，留着它提醒才成立。
+     */
+    private void detectRemovedVersions(
+            Map<VersionKey, PluginVersion> versionsByKey,
+            Set<VersionKey> seenVersions,
+            SyncBatch batch) {
+        for (Map.Entry<VersionKey, PluginVersion> entry : versionsByKey.entrySet()) {
+            if (seenVersions.contains(entry.getKey())) {
+                continue;
+            }
+            long versionId = entry.getValue().getId();
+            List<String> nodeKeys =
+                    nodeMapper
+                            .selectList(
+                                    new LambdaQueryWrapper<PluginNode>()
+                                            .eq(PluginNode::getPluginVersionId, versionId))
+                            .stream()
+                            .map(PluginNode::getNodeKey)
+                            .toList();
+            if (nodeKeys.isEmpty()) {
+                continue;
+            }
+            batch.nodeChanges.add(new PluginNodesChangedEvent(versionId, List.of(), nodeKeys));
+            log.warn("插件版本已从库索引移除，引用它的工作流将标失效: version={} nodes={}", versionId, nodeKeys.size());
+        }
     }
 
     private Plugin upsertPlugin(
