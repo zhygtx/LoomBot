@@ -5,6 +5,7 @@ import com.loom.adapter.AdapterControlClient;
 import com.loom.adapter.AdapterControlException;
 import com.loom.workflow.domain.WorkflowInfo;
 import com.loom.workflow.domain.WorkflowVersion;
+import com.loom.workflow.event.WorkflowSchedulesChangedEvent;
 import com.loom.workflow.mapper.WorkflowInfoMapper;
 import com.loom.workflow.mapper.WorkflowVersionMapper;
 import java.util.ArrayList;
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
@@ -56,6 +58,12 @@ public class WorkflowScheduleSyncService {
             fixedDelayString = "${loom.workflow.runtime.schedule-sync-interval:30s}",
             initialDelayString = "${loom.workflow.runtime.schedule-sync-initial-delay:15s}")
     public void syncAutomatically() {
+        push();
+    }
+
+    /** 定时集合被动变化（比如节点失效导致工作流被停用）时立刻推一次，不用等下一个周期。 */
+    @EventListener
+    public void onSchedulesChanged(WorkflowSchedulesChangedEvent event) {
         push();
     }
 

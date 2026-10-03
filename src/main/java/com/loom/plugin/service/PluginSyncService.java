@@ -10,6 +10,7 @@ import com.loom.plugin.domain.PluginDependency;
 import com.loom.plugin.domain.PluginNode;
 import com.loom.plugin.domain.PluginRepository;
 import com.loom.plugin.domain.PluginVersion;
+import com.loom.plugin.event.PluginNodesChangedEvent;
 import com.loom.plugin.mapper.PluginCapabilityMapper;
 import com.loom.plugin.mapper.PluginConnectionTypeMapper;
 import com.loom.plugin.mapper.PluginDependencyMapper;
@@ -29,14 +30,17 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -75,6 +79,7 @@ public class PluginSyncService {
     private final PluginDependencyMapper dependencyMapper;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
+    private final ApplicationEventPublisher events;
     private final AtomicBoolean syncing = new AtomicBoolean(false);
 
     public PluginSyncService(
@@ -90,7 +95,8 @@ public class PluginSyncService {
             PluginNodeMapper nodeMapper,
             PluginDependencyMapper dependencyMapper,
             ObjectMapper objectMapper,
-            TransactionTemplate transactionTemplate) {
+            TransactionTemplate transactionTemplate,
+            ApplicationEventPublisher events) {
         this.properties = properties;
         this.repositorySynchronizer = repositorySynchronizer;
         this.dependencyInstaller = dependencyInstaller;
@@ -104,6 +110,7 @@ public class PluginSyncService {
         this.dependencyMapper = dependencyMapper;
         this.objectMapper = objectMapper;
         this.transactionTemplate = transactionTemplate;
+        this.events = events;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -163,13 +170,17 @@ public class PluginSyncService {
             }
 
             try {
+                // 节点变更事件在事务提交之后再发：监听方要写工作流提醒、动 Redis 和定时快照，
+                // 这些都不是事务性的，放在事务里会变成"插件回滚了但提醒留下了"。
+                List<PluginNodesChangedEvent> pendingChanges = new ArrayList<>();
                 transactionTemplate.executeWithoutResult(
-                        status -> applySnapshot(repository, snapshot));
+                        status -> applySnapshot(repository, snapshot, pendingChanges));
                 repository.setLastCommitHash(scanKey);
                 repository.setLastScanTime(LocalDateTime.now());
                 repository.setLastError(null);
                 repositoryMapper.updateById(repository);
                 log.info("插件仓库同步完成: commit={}", snapshot.commitHash());
+                pendingChanges.forEach(events::publishEvent);
             } catch (RuntimeException e) {
                 repository.setLastError(trim(e.getMessage(), 1024));
                 repositoryMapper.updateById(repository);
@@ -181,32 +192,28 @@ public class PluginSyncService {
     }
 
     private void applySnapshot(
-            PluginRepository repository, PluginRepositorySynchronizer.RepositorySnapshot snapshot) {
+            PluginRepository repository,
+            PluginRepositorySynchronizer.RepositorySnapshot snapshot,
+            List<PluginNodesChangedEvent> pendingChanges) {
         PluginIndex index = readIndex(snapshot.root());
         if (index.plugins() == null || index.plugins().isEmpty()) {
             log.warn("插件仓库没有登记任何插件: {}", snapshot.root());
             return;
         }
-        List<String> pluginKeys =
-                index.plugins().stream()
-                        .map(PluginIndexEntry::key)
-                        .filter(java.util.Objects::nonNull)
-                        .map(String::strip)
-                        .toList();
+        // 按仓库取全部插件再按 plugin_key 索引：plugin_key 现在可能带命名空间前缀（alice.text-tools），
+        // 拿 index.json 里的裸 key 去 IN 查是查不到的。
         Map<String, Plugin> pluginsByKey =
-                pluginKeys.isEmpty()
-                        ? Map.of()
-                        : pluginMapper
-                                .selectList(
-                                        new LambdaQueryWrapper<Plugin>()
-                                                .in(Plugin::getPluginKey, pluginKeys))
-                                .stream()
-                                .collect(
-                                        Collectors.toMap(
-                                                Plugin::getPluginKey,
-                                                plugin -> plugin,
-                                                (left, right) -> left,
-                                                HashMap::new));
+                pluginMapper
+                        .selectList(
+                                new LambdaQueryWrapper<Plugin>()
+                                        .eq(Plugin::getRepositoryId, repository.getId()))
+                        .stream()
+                        .collect(
+                                Collectors.toMap(
+                                        Plugin::getPluginKey,
+                                        plugin -> plugin,
+                                        (left, right) -> left,
+                                        HashMap::new));
         Map<VersionKey, PluginVersion> versionsByKey = new HashMap<>();
         List<Long> existingPluginIds =
                 pluginsByKey.values().stream().map(Plugin::getId).distinct().toList();
@@ -236,17 +243,23 @@ public class PluginSyncService {
             }
         }
         flushBatch(batch);
+        pendingChanges.addAll(batch.nodeChanges);
     }
 
     private Plugin upsertPlugin(
             PluginRepository repository, PluginIndexEntry entry, Map<String, Plugin> pluginsByKey) {
-        String key = entry.key().strip();
+        String rawKey = entry.key().strip();
+        String namespace = entry.namespace() == null ? "" : entry.namespace().strip();
+        // 声明了命名空间就拼进 key：alice.text-tools。
+        // 同一个仓库里不同作者的同名插件因此是两个不同的插件，各有各的版本和节点目录。
+        String key = namespace.isEmpty() ? rawKey : namespace + "." + rawKey;
         Plugin plugin = pluginsByKey.get(key);
         if (plugin == null) {
             plugin = new Plugin();
             plugin.setRepositoryId(repository.getId());
+            plugin.setNamespace(namespace.isEmpty() ? null : namespace);
             plugin.setPluginKey(key);
-            plugin.setName(key);
+            plugin.setName(rawKey);
             plugin.setSort(0);
             pluginMapper.insert(plugin);
             pluginsByKey.put(key, plugin);
@@ -542,11 +555,24 @@ public class PluginSyncService {
                             + " scanned="
                             + scannedAdapters);
         }
+        // 变更检测必须在 flushBatch 删旧行之前做：拿旧目录和新目录比，
+        // 同一个 nodeKey 签名变了 = 契约变更，旧的有、新的没有 = 节点被删。
+        // 两者都要通知出去，引用了它们的工作流会被标上提醒。
+        Map<String, String> previousSignatures = existingNodeSignatures(versionId);
+        Set<String> seenKeys = new HashSet<>();
+        List<String> changedKeys = new ArrayList<>();
         for (PluginCatalogScanner.ScannedNode node : catalog.nodes()) {
+            String nodeKey = required(node.nodeKey(), "nodeKey", pluginDir);
+            String signature = nodeSignature(node);
+            seenKeys.add(nodeKey);
+            String previous = previousSignatures.get(nodeKey);
+            if (previous != null && !previous.equals(signature)) {
+                changedKeys.add(nodeKey);
+            }
             PluginNode entity = new PluginNode();
             entity.setId(IdWorker.getId());
             entity.setPluginVersionId(versionId);
-            entity.setNodeKey(required(node.nodeKey(), "nodeKey", pluginDir));
+            entity.setNodeKey(nodeKey);
             entity.setNodeType(node.nodeType());
             entity.setConnectionType(node.connectionType());
             entity.setName(node.name());
@@ -554,11 +580,59 @@ public class PluginSyncService {
             entity.setInputSchema(node.inputSchema());
             entity.setOutputSchema(node.outputSchema());
             entity.setSourceRef(trim(node.sourceRef(), 255));
-            entity.setSignatureHash(node.signatureHash());
+            // 用 Java 这边算的签名，而不是插件自己报的：适配器事件/动作节点根本不带签名，
+            // 而且签名要覆盖"契约"（入参/出参 schema），不能由插件随便给一个值。
+            entity.setSignatureHash(signature);
             entity.setSort(node.sort());
             batch.nodes.add(entity);
         }
+        List<String> removedKeys =
+                previousSignatures.keySet().stream()
+                        .filter(key -> !seenKeys.contains(key))
+                        .toList();
+        if (!changedKeys.isEmpty() || !removedKeys.isEmpty()) {
+            batch.nodeChanges.add(new PluginNodesChangedEvent(versionId, changedKeys, removedKeys));
+            log.info(
+                    "插件节点契约发生变化: version={} changed={} removed={}",
+                    versionId,
+                    changedKeys,
+                    removedKeys);
+        }
         log.info("插件节点目录已导出: version={} nodes={}", versionId, catalog.nodes().size());
+    }
+
+    /** 这个版本当前登记在库里的节点签名，按 nodeKey 索引。新版本返回空表。 */
+    private Map<String, String> existingNodeSignatures(long versionId) {
+        Map<String, String> signatures = new HashMap<>();
+        List<PluginNode> rows =
+                nodeMapper.selectList(
+                        new LambdaQueryWrapper<PluginNode>()
+                                .eq(PluginNode::getPluginVersionId, versionId));
+        for (PluginNode row : rows) {
+            signatures.put(row.getNodeKey(), nz(row.getSignatureHash()));
+        }
+        return signatures;
+    }
+
+    /**
+     * 节点签名，只覆盖「契约」：节点 key、类型、连接类型、入参 schema、出参 schema。
+     *
+     * <p>刻意不含显示名和描述——改个文案不该把所有引用它的工作流标成「已变更」。
+     */
+    private static String nodeSignature(PluginCatalogScanner.ScannedNode node) {
+        String payload =
+                String.join(
+                        "\u0000",
+                        nz(node.nodeKey()),
+                        nz(node.nodeType()),
+                        nz(node.connectionType()),
+                        nz(node.inputSchema()),
+                        nz(node.outputSchema()));
+        return sha256(payload).substring(0, 32);
+    }
+
+    private static String nz(String value) {
+        return value == null ? "" : value;
     }
 
     private void flushBatch(SyncBatch batch) {
@@ -760,13 +834,15 @@ public class PluginSyncService {
         private final List<PluginConnectionType> connectionTypes = new ArrayList<>();
         private final List<PluginNode> nodes = new ArrayList<>();
         private final List<PluginDependency> dependencies = new ArrayList<>();
+        private final List<PluginNodesChangedEvent> nodeChanges = new ArrayList<>();
     }
 
     private record VersionKey(long pluginId, String version) {}
 
     private record PluginIndex(int schemaVersion, List<PluginIndexEntry> plugins) {}
 
-    private record PluginIndexEntry(String key, List<PluginVersionEntry> versions) {}
+    private record PluginIndexEntry(
+            String key, String namespace, List<PluginVersionEntry> versions) {}
 
     private record PluginVersionEntry(String version, String path, String publishedTime) {}
 }

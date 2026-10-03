@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.loom.common.api.Result;
 import com.loom.common.security.CurrentUser;
 import com.loom.workflow.domain.WorkflowInfo;
+import com.loom.workflow.domain.WorkflowNodeAlert;
 import com.loom.workflow.domain.WorkflowVersion;
 import com.loom.workflow.dto.WorkflowExecutionDetail;
 import com.loom.workflow.dto.WorkflowExecutionSummary;
@@ -11,6 +12,7 @@ import com.loom.workflow.dto.WorkflowSaveRequest;
 import com.loom.workflow.mapper.WorkflowInfoMapper;
 import com.loom.workflow.mapper.WorkflowVersionMapper;
 import com.loom.workflow.service.WorkflowExecutionQueryService;
+import com.loom.workflow.service.WorkflowNodeAlertService;
 import com.loom.workflow.service.WorkflowNodeCatalogService;
 import com.loom.workflow.service.WorkflowService;
 import java.io.IOException;
@@ -20,6 +22,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -49,6 +52,7 @@ public class WorkflowController {
     private final WorkflowExecutionQueryService executionQuery;
     private final ObjectMapper objectMapper;
     private final WorkflowNodeCatalogService nodeCatalog;
+    private final WorkflowNodeAlertService nodeAlertService;
 
     public WorkflowController(
             WorkflowService service,
@@ -56,13 +60,15 @@ public class WorkflowController {
             WorkflowVersionMapper versionMapper,
             WorkflowExecutionQueryService executionQuery,
             ObjectMapper objectMapper,
-            WorkflowNodeCatalogService nodeCatalog) {
+            WorkflowNodeCatalogService nodeCatalog,
+            WorkflowNodeAlertService nodeAlertService) {
         this.service = service;
         this.infoMapper = infoMapper;
         this.versionMapper = versionMapper;
         this.executionQuery = executionQuery;
         this.objectMapper = objectMapper;
         this.nodeCatalog = nodeCatalog;
+        this.nodeAlertService = nodeAlertService;
     }
 
     /** 画布节点目录：插件节点 + 系统节点。 */
@@ -76,11 +82,24 @@ public class WorkflowController {
     @PreAuthorize("@permission.has(authentication, 'workflow:def:list')")
     public Result<List<WorkflowInfo>> list() {
         Long ownerUserId = CurrentUser.requireId();
-        return Result.success(
+        List<WorkflowInfo> workflows =
                 infoMapper.selectList(
                         new LambdaQueryWrapper<WorkflowInfo>()
                                 .eq(WorkflowInfo::getOwnerUserId, ownerUserId)
-                                .orderByDesc(WorkflowInfo::getUpdateTime)));
+                                .orderByDesc(WorkflowInfo::getUpdateTime));
+        Set<Long> alerted =
+                nodeAlertService.workflowsWithAlerts(
+                        workflows.stream().map(WorkflowInfo::getId).toList());
+        workflows.forEach(item -> item.setHasAlert(alerted.contains(item.getId())));
+        return Result.success(workflows);
+    }
+
+    /** 画布用：这条工作流有哪些节点失效了。 */
+    @GetMapping("/{id}/alerts")
+    @PreAuthorize("@permission.has(authentication, 'workflow:def:list')")
+    public Result<List<WorkflowNodeAlert>> nodeAlerts(@PathVariable Long id) {
+        service.requireOwned(id, CurrentUser.requireId());
+        return Result.success(nodeAlertService.alertsOf(id));
     }
 
     @GetMapping("/{id}")

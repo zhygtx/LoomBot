@@ -125,6 +125,33 @@ public class WorkflowDefinitionValidator {
                 eventKey);
     }
 
+    /**
+     * 从定义里取出事件入口，**不跑完整校验**。
+     *
+     * <p>历史定义可能引用了已经删掉的插件节点，那种定义仍然需要能取出事件入口（比如解绑触发索引）， 所以这条路不能顺手做校验。
+     */
+    public EventEntry eventEntryOf(JsonNode definition) {
+        String eventNodeId = definition.path("eventNodeId").asText("");
+        if (eventNodeId.isBlank()) {
+            return null;
+        }
+        for (JsonNode node : definition.path("nodes")) {
+            if (!eventNodeId.equals(node.path("id").asText(""))) {
+                continue;
+            }
+            String nodeKey = node.path("nodeKey").asText("");
+            String kind = SYSTEM_EVENTS.contains(nodeKey) ? KIND_SCHEDULE : KIND_ADAPTER;
+            String connectionType = node.path("connectionType").asText("");
+            return new EventEntry(
+                    eventNodeId,
+                    kind,
+                    JsonIds.parse(node, "connectionId"),
+                    connectionType.isEmpty() ? null : connectionType,
+                    nodeKey);
+        }
+        return null;
+    }
+
     private PluginNode catalogFor(JsonNode node, String nodeKey) {
         if (SYSTEM_EVENTS.contains(nodeKey)) {
             return null;
@@ -133,16 +160,29 @@ public class WorkflowDefinitionValidator {
         if (pluginVersionId == null) {
             throw new IllegalArgumentException("节点 " + nodeKey + " 缺少 pluginVersionId");
         }
-        PluginNode row =
-                nodeMapper.selectOne(
-                        new LambdaQueryWrapper<PluginNode>()
-                                .eq(PluginNode::getPluginVersionId, pluginVersionId)
-                                .eq(PluginNode::getNodeKey, nodeKey));
+        PluginNode row = findNode(pluginVersionId, nodeKey);
         if (row == null) {
             throw new IllegalArgumentException(
-                    "节点未登记: pluginVersionId=" + pluginVersionId + " nodeKey=" + nodeKey);
+                    "节点「"
+                            + nodeKey
+                            + "」引用的插件已变更或已删除，请重新选择节点后再保存（pluginVersionId="
+                            + pluginVersionId
+                            + "）");
         }
         return row;
+    }
+
+    /** 当前登记的节点签名；节点已经不存在时返回 null。 */
+    public String nodeSignatureOf(Long pluginVersionId, String nodeKey) {
+        PluginNode row = findNode(pluginVersionId, nodeKey);
+        return row == null ? null : row.getSignatureHash();
+    }
+
+    private PluginNode findNode(Long pluginVersionId, String nodeKey) {
+        return nodeMapper.selectOne(
+                new LambdaQueryWrapper<PluginNode>()
+                        .eq(PluginNode::getPluginVersionId, pluginVersionId)
+                        .eq(PluginNode::getNodeKey, nodeKey));
     }
 
     private boolean isEvent(PluginNode row, String nodeKey) {

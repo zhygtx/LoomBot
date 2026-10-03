@@ -50,6 +50,7 @@ public class WorkflowService {
     private final WorkflowTestClient testClient;
     private final ObjectMapper objectMapper;
     private final WorkflowExecutionCleanupService executionCleanup;
+    private final WorkflowNodeAlertService nodeAlertService;
 
     public WorkflowService(
             WorkflowInfoMapper infoMapper,
@@ -62,7 +63,8 @@ public class WorkflowService {
             WorkflowRuntimeProperties runtimeProperties,
             WorkflowTestClient testClient,
             ObjectMapper objectMapper,
-            WorkflowExecutionCleanupService executionCleanup) {
+            WorkflowExecutionCleanupService executionCleanup,
+            WorkflowNodeAlertService nodeAlertService) {
         this.infoMapper = infoMapper;
         this.versionMapper = versionMapper;
         this.pluginVersionMapper = pluginVersionMapper;
@@ -74,6 +76,7 @@ public class WorkflowService {
         this.testClient = testClient;
         this.objectMapper = objectMapper;
         this.executionCleanup = executionCleanup;
+        this.nodeAlertService = nodeAlertService;
     }
 
     /** 运行时按版本拉取定义所需的全部信息。 */
@@ -142,6 +145,8 @@ public class WorkflowService {
             unindexVersion(previousVersionId);
         }
         indexVersion(version.getId(), eventEntry);
+        // 保存成功后重算提醒：节点换成当前版本了就清掉，没换（只是原样保存）就留着。
+        nodeAlertService.recompute(info.getId(), definition);
         log.info(
                 "工作流版本已保存: workflow={} version={} event={}",
                 info.getId(),
@@ -161,6 +166,8 @@ public class WorkflowService {
             return;
         }
         if (enabled) {
+            // 有节点提醒说明定义和当前插件对不上，放开只会立刻跑失败
+            nodeAlertService.assertRunnable(workflowId);
             indexVersion(versionId, eventEntryOf(requireVersion(versionId)));
         } else {
             unindexVersion(versionId);
@@ -188,6 +195,7 @@ public class WorkflowService {
     /** 测试执行：直接调用工作流运行时，不经过 Redis 和触发索引。 */
     public JsonNode test(Long workflowId, Long ownerUserId) {
         WorkflowInfo info = requireOwned(workflowId, ownerUserId);
+        nodeAlertService.assertRunnable(workflowId);
         Long versionId = info.getCurrentVersionId();
         if (versionId == null) {
             throw new IllegalArgumentException("工作流还没有保存过定义");
@@ -335,30 +343,7 @@ public class WorkflowService {
 
     /** 从定义里取出事件入口，不跑完整校验（历史定义可能引用已删除的插件）。 */
     public WorkflowDefinitionValidator.EventEntry eventEntryOf(WorkflowVersion version) {
-        JsonNode definition = objectMapper.readTree(version.getDefinition());
-        String eventNodeId = definition.path("eventNodeId").asText("");
-        if (eventNodeId.isBlank()) {
-            return null;
-        }
-        for (JsonNode node : definition.path("nodes")) {
-            if (!eventNodeId.equals(node.path("id").asText(""))) {
-                continue;
-            }
-            String nodeKey = node.path("nodeKey").asText("");
-            String kind =
-                    nodeKey.equals("system.schedule")
-                            ? WorkflowDefinitionValidator.KIND_SCHEDULE
-                            : WorkflowDefinitionValidator.KIND_ADAPTER;
-            return new WorkflowDefinitionValidator.EventEntry(
-                    eventNodeId,
-                    kind,
-                    JsonIds.parse(node, "connectionId"),
-                    node.path("connectionType").asText("").isEmpty()
-                            ? null
-                            : node.path("connectionType").asText(""),
-                    nodeKey);
-        }
-        return null;
+        return validator.eventEntryOf(objectMapper.readTree(version.getDefinition()));
     }
 
     private String pluginKeyOf(Long pluginVersionId) {

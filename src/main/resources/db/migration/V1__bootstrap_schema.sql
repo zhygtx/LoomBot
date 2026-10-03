@@ -199,16 +199,23 @@ CREATE TABLE plugin_repository (
 CREATE TABLE plugin (
     id            BIGINT       NOT NULL,
     repository_id BIGINT       NOT NULL,
+    -- index.json 里声明的命名空间（可选）。声明了就把它拼进 plugin_key，形如 alice.text-tools，
+    -- 这样同一个仓库里不同作者的同名插件可以共存。命名空间是稳定契约：一旦声明就不能改，
+    -- 因为它已经写进了 plugin_key，而工作流定义的 nodeKey 又跟着 plugin_key 走。
+    namespace     VARCHAR(64)  NULL,
     plugin_key    VARCHAR(64)  NOT NULL,
     name          VARCHAR(128) NOT NULL,
     description   VARCHAR(512) NULL,
     homepage      VARCHAR(512) NULL,
+    -- 只用于展示，不参与身份：作者改名不该让插件换一个身份
     author        VARCHAR(128) NULL,
     sort          INT          NOT NULL DEFAULT 0,
     create_time   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_plugin_key (plugin_key),
+    -- 唯一性按仓库隔离：不同仓库允许有同名插件（各自有各自的版本和节点），
+    -- 同一个仓库内靠 namespace 区分不同作者。plugin_key 里已经含 namespace，所以这两条合起来就够了。
+    UNIQUE KEY uk_plugin_repository_key (repository_id, plugin_key),
     KEY idx_plugin_repository (repository_id),
     KEY idx_plugin_sort (sort)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '插件稳定身份';
@@ -415,6 +422,27 @@ CREATE TABLE workflow_execution_hourly (
     PRIMARY KEY (biz_hour, owner_user_id, workflow_id, connection_id, trigger_type),
     KEY idx_execution_hourly_cleanup (biz_hour)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '工作流执行小时汇总';
+
+-- 插件节点变更后，引用了「已变更 / 已删除」节点的工作流在这里留一条提醒。
+--
+-- 为什么是主动写而不是加载时算：事件触发的工作流可能很久没人打开，加载时算等于永远不提示，
+-- 它会一直跑失败而用户只能从失败日志里倒查。所以插件同步时就把受影响的找出来标上。
+-- 用户把节点改成当前版本后重新保存，这里会被重算——没改就还在，改了才消失。
+CREATE TABLE workflow_node_alert (
+    id                BIGINT       NOT NULL,
+    workflow_id       BIGINT       NOT NULL,
+    -- 画布上的节点 id（定义里的 node.id），不是 node_key：同一个 node_key 可以在画布上出现多次
+    node_id           VARCHAR(128) NOT NULL,
+    node_key          VARCHAR(128) NOT NULL,
+    plugin_version_id BIGINT       NULL,
+    -- CHANGED：节点还在，但参数或返回值变了；REMOVED：节点已经被删掉
+    reason            VARCHAR(16)  NOT NULL,
+    detail            VARCHAR(512) NULL,
+    create_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_workflow_node_alert (workflow_id, node_id),
+    KEY idx_workflow_node_alert_workflow (workflow_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '工作流节点失效提醒';
 
 -- ---------------------------------------------------------------------------
 -- 连接与通知
