@@ -69,9 +69,9 @@ WORK: Path | None = None
 # 本地密钥（Gitee token、AI key），在 main() 里读一次；不进日志、不进仓库
 SECRETS: dict = {}
 # 终态：不用再管了
-FINAL_STATUSES = {"published", "rejected", "merged_no_publish"}
-# 中间态：合并已经做完了，只剩发布没走完——重跑时直接续发布，别再走一遍审核和合并
-RESUMABLE_STATUSES = {"merged", "publish_failed"}
+FINAL_STATUSES = {"published", "rejected", "merged_no_publish", "deletion_done"}
+# 中间态：合并已经做完了，只剩收尾没走完——重跑时直接续做，别再走一遍审核和合并
+RESUMABLE_STATUSES = {"merged", "publish_failed", "deletion_merged"}
 
 
 def _resumable(state: "State") -> list[tuple[int, dict]]:
@@ -291,10 +291,13 @@ def process_pull(client: GiteeClient, config: dict, state: State, log: BotLogger
         if previous.get("status") in FINAL_STATUSES:
             return
         if previous.get("status") in RESUMABLE_STATUSES:
-            # 上次已经合过了，只是发布没走完。重走审核和合并只会失败（PR 已经合并/关闭），
-            # 所以直接续发布这一步。
-            log.log(f"PR #{number} 续做发布（上次状态：{previous.get('status')}）")
-            _publish_and_report(client, config, state, log, number, pull, head_sha)
+            # 上次已经合过了，只是收尾没走完。重走审核和合并只会失败（PR 已经合并/关闭），
+            # 所以直接续最后一步：普通 PR 是发布，删除 PR 是对账。
+            log.log(f"PR #{number} 续做（上次状态：{previous.get('status')}）")
+            if previous.get("status") == "deletion_merged":
+                _reconcile_and_report(client, config, state, log, number, head_sha)
+            else:
+                _publish_and_report(client, config, state, log, number, pull, head_sha)
             return
 
     # 工作区不干净就别动 git：切分支会覆盖未提交的改动，发布那一步也会因此拒绝执行。
@@ -357,11 +360,9 @@ def process_pull(client: GiteeClient, config: dict, state: State, log: BotLogger
     log.log(f"PR #{number} 已合并")
 
     if deletion:
-        # 删除 PR 只是删掉已发布版本，没有代码要冻结发布；合并即完成。
-        # 拉一下目标分支，让后面的 PR 拿到的 before 是最新的。
-        git("fetch", "origin", config["repo"]["branch"])
-        state.set(number, "merged_no_publish", head_sha, "删除 PR（作者撤下自己的版本）")
-        log.log(f"PR #{number} 删除已生效")
+        # 删除 PR 没有代码要冻结发布；合并后跑一次对账，把 index.json 和 plugins/ 目录对齐。
+        state.set(number, "deletion_merged", head_sha)
+        _reconcile_and_report(client, config, state, log, number, head_sha)
         return
 
     state.set(number, "merged", head_sha)
@@ -389,6 +390,30 @@ def _publish_and_report(
     client.comment(number, published)
     state.set(number, "published", head_sha)
     log.log(f"PR #{number} 已发布")
+
+
+def _reconcile_and_report(
+    client: GiteeClient, config: dict, state: State, log: BotLogger, number: int, head_sha: str
+) -> None:
+    """删除 PR 合并后：把 index.json 和 plugins/ 目录对齐，再把结果写回 PR 和状态。"""
+    try:
+        changed = _reconcile(config, log, number)
+    except Exception as exc:  # noqa: BLE001 - 对账失败要留痕并让作者知道
+        log.log(f"PR #{number} 删除后对账失败：{exc}")
+        client.comment(
+            number,
+            f"## 已合并，但删除后对账失败\n\n```\n{exc}\n```\n\n下一轮轮询会自动重试。",
+        )
+        state.set(number, "deletion_merged", head_sha, f"对账失败：{exc}"[:400])
+        return
+    body = "## 删除已生效\n\n" + (
+        "机器人已把 `index.json` 和 `plugins/` 目录对齐。"
+        if changed
+        else "索引和目录本来就是一致的。"
+    )
+    client.comment(number, body)
+    state.set(number, "deletion_done", head_sha)
+    log.log(f"PR #{number} 删除已生效")
 
 
 def _review_pull(client, config, log: BotLogger, number: int, files: list[str]):
@@ -422,7 +447,10 @@ def _review_deletion(config: dict, log: BotLogger, pull: dict, files: list[str])
         return GateResult(
             passed=False,
             level="REJECT",
-            reasons=["删除 PR 只能删 `plugins/` 下已发布的版本目录，不能加或改别的文件。"],
+            reasons=[
+                "删除 PR 只能删已发布的版本：改动只许落在 `index.json` 和 `plugins/` 下，"
+                "而且 `plugins/` 下只能是删除，不能新增或修改。"
+            ],
         )
     branch = config["repo"]["branch"]
     try:
@@ -450,7 +478,13 @@ def _review_deletion(config: dict, log: BotLogger, pull: dict, files: list[str])
             reasons=[f"PR 里的 `index.json` 读不了：{exc}"],
         )
     actor = str((pull.get("user") or {}).get("login") or "").strip()
-    result = gate_deletion(before, after, actor)
+    # 作者只删了目录那一项时 index.json 没动，得靠实际不在了的 plugins/ 文件才知道删了哪个版本
+    deleted_paths = [
+        name
+        for name in files
+        if name.replace("\\", "/").startswith("plugins/") and not (WORK / name).exists()
+    ]
+    result = gate_deletion(before, after, actor, deleted_paths)
     if result.passed:
         log.log(f"删除 PR 审核通过：actor={actor}")
     return result
@@ -469,7 +503,8 @@ def _deletion_plan_comment(result) -> str:
     lines.extend(f"- {item}" for item in result.notes)
     lines.append("")
     lines.append(
-        "接下来机器人会合并这个 PR。Loom 侧会在下一个同步周期（默认 30 秒）拉到，"
+        "接下来机器人会合并这个 PR，并把 `index.json` 和 `plugins/` 目录对齐"
+        "（你只删了其中一边也没关系）。Loom 侧会在下一个同步周期（默认 30 秒）拉到，"
         "引用被删版本的工作流会被标失效并摘掉触发。"
     )
     return "\n".join(lines)
@@ -563,6 +598,48 @@ def _publish(config: dict, log: BotLogger, number: int, pull: dict) -> str:
         f"机器人补全的文件：\n{detail}\n\n"
         "Loom 侧会在下一个同步周期（默认 30 秒）拉到这个新版本。"
     )
+
+
+def _reconcile(config: dict, log: BotLogger, number: int) -> bool:
+    """合并之后：把 index.json 和 plugins/ 目录对齐（作者删了一边，这里补另一边）。
+
+    和发布一样**可重入**：推送失败后重跑不该重复对账，先看本地有没有没推出去的对账提交。
+    """
+    branch = config["repo"]["branch"]
+    git("checkout", branch)
+    git("fetch", "origin", branch)
+    if _ahead_of_remote(branch):
+        log.log("  本地已有未推送的对账提交，直接补推")
+        _push(config, branch)
+        return True
+    git("pull", "--ff-only", "origin", branch)
+    if not repo_is_clean():
+        raise RuntimeError("工作区不干净，拒绝对账（先让维护者处理）")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "system.plugin_market.loom_publish",
+            "reconcile",
+            "--library",
+            str(WORK),
+        ],
+        cwd=str(PY_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"对账失败：{(result.stderr or result.stdout).strip()}")
+    log.log(result.stdout.strip())
+    if not git("status", "--porcelain").strip():
+        return False
+
+    git("add", "-A")
+    git("commit", "-m", f"删除后对账（PR #{number}）")
+    _push(config, branch)
+    return True
 
 
 def _push(config: dict, branch: str) -> None:

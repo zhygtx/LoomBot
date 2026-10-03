@@ -17,6 +17,9 @@
       撤下自己发布的某个版本：删掉版本目录并从 index.json 去掉这条记录，然后提一个只删东西的 PR。
       机器人核对这个插件是不是你的（index.json 的 owner），是就合并；Loom 侧按「节点被删」处理。
 
+  python scripts/loom_publish.py reconcile --library .
+      让 index.json 和 plugins/ 目录对齐：作者只删了其中一边时，补上另一边（机器人合并删除 PR 后跑）。
+
 约定（三条，缺一不可）：
 
 1. **sources/ 是暂存区，不是长期源码目录。** 作者在这里提交，PR 通过后由机器人复制进
@@ -318,6 +321,78 @@ def remove_version(root: Path, *, author: str, key: str, version: str) -> Path:
     return target
 
 
+def reconcile(root: Path) -> dict[str, list[str]]:
+    """让 `index.json` 和 `plugins/` 目录对齐。
+
+    作者删版本时只删其中一边就够了（删目录，或删索引记录），这里补另一边：
+
+    - 索引里有、目录没了的版本 → 从索引里去掉；
+    - 目录在、索引里没有的版本 → 删掉目录。
+
+    只在删除 PR 合并之后跑，所以「目录在但索引没有」一定是作者刚删了索引那一项，删目录是安全的。
+    """
+    data = load_index(root)
+    listed: set[str] = set()
+    for entry in data.get("plugins") or []:
+        for item in entry.get("versions") or []:
+            relative = str(item.get("path") or "").replace("\\", "/").strip("/")
+            if relative:
+                listed.add(relative)
+
+    removed_dirs: list[str] = []
+    plugins_root = root / "plugins"
+    if plugins_root.is_dir():
+        for author_dir in sorted(plugins_root.iterdir()):
+            if not author_dir.is_dir():
+                continue
+            for key_dir in sorted(author_dir.iterdir()):
+                if not key_dir.is_dir():
+                    continue
+                for version_dir in sorted(key_dir.iterdir()):
+                    if not version_dir.is_dir():
+                        continue
+                    relative = version_dir.relative_to(root).as_posix()
+                    if relative not in listed:
+                        shutil.rmtree(version_dir)
+                        removed_dirs.append(relative)
+
+    removed_index: list[str] = []
+    kept_plugins: list = []
+    for entry in data.get("plugins") or []:
+        if not isinstance(entry, dict):
+            continue
+        kept_versions = []
+        for item in entry.get("versions") or []:
+            relative = str(item.get("path") or "").replace("\\", "/").strip("/")
+            if relative and (root / relative).is_dir():
+                kept_versions.append(item)
+            else:
+                removed_index.append(relative or str(item.get("version") or "?"))
+        if kept_versions:
+            entry["versions"] = kept_versions
+            kept_plugins.append(entry)
+        else:
+            removed_index.append(f"{entry.get('namespace')}.{entry.get('key')}")
+    data["plugins"] = kept_plugins
+
+    # 收掉空掉的插件目录 / 作者目录
+    if plugins_root.is_dir():
+        for author_dir in sorted(plugins_root.iterdir()):
+            if not author_dir.is_dir():
+                continue
+            for key_dir in sorted(author_dir.iterdir()):
+                if key_dir.is_dir() and not any(key_dir.iterdir()):
+                    key_dir.rmdir()
+            if not any(author_dir.iterdir()):
+                author_dir.rmdir()
+
+    path = root / "index.json"
+    rendered = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    if rendered != path.read_text(encoding="utf-8"):
+        path.write_text(rendered, encoding="utf-8")
+    return {"dirs": removed_dirs, "index": removed_index}
+
+
 # ---------------------------------------------------------------------------
 # 路径推断
 # ---------------------------------------------------------------------------
@@ -459,6 +534,20 @@ def run_remove(spec: str, version: str, *, library_root: Path) -> None:
     print("== 提一个只删东西的 PR；机器人核对归属后合并，Loom 侧下一个同步周期生效 ==")
 
 
+def run_reconcile(*, library_root: Path) -> None:
+    """对齐 index.json 和 plugins/ 目录（机器人合并删除 PR 后调用）。"""
+    root = library_root.resolve()
+    result = reconcile(root)
+    if not result["dirs"] and not result["index"]:
+        print("  ✓ index.json 和 plugins/ 已经一致，无需对账")
+        return
+    for item in result["dirs"]:
+        print(f"  ✓ 删掉索引里没有的版本目录：{item}")
+    for item in result["index"]:
+        print(f"  ✓ 从 index.json 去掉已不存在的版本：{item}")
+    print("== 对账完成 ==")
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -467,7 +556,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         prog="loom_publish.py",
-        description="Loom 插件库发布脚本：check（自检）/ build（冻结并更新索引）/ start（取回最新版本继续改）/ remove（删掉自己发布的版本）",
+        description="Loom 插件库发布脚本：check（自检）/ build（冻结并更新索引）/ start（取回最新版本继续改）/ remove（删掉自己发布的版本）/ reconcile（对齐索引和目录）",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -489,6 +578,9 @@ def main() -> int:
     p_remove.add_argument("version", metavar="<版本>")
     p_remove.add_argument("--library", metavar="<库根目录>", default=".")
 
+    p_reconcile = sub.add_parser("reconcile", help="让 index.json 和 plugins/ 目录对齐")
+    p_reconcile.add_argument("--library", metavar="<库根目录>", default=".")
+
     args = parser.parse_args()
     try:
         if args.command == "check":
@@ -500,8 +592,10 @@ def main() -> int:
             run_build(Path(args.src), library_root=Path(args.apply), clean_source=args.clean_source)
         elif args.command == "start":
             run_start(args.spec, library_root=Path(args.library))
-        else:
+        elif args.command == "remove":
             run_remove(args.spec, args.version, library_root=Path(args.library))
+        else:
+            run_reconcile(library_root=Path(args.library))
     except PublishError as exc:
         print(f"\n✗ {exc}", file=sys.stderr)
         return 1
