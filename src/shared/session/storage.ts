@@ -1,4 +1,4 @@
-const SESSION_STORAGE_KEY = 'loom.auth.session'
+const SESSION_STORAGE_KEY = 'loombot.auth.session'
 
 export interface StoredSession {
   token: string

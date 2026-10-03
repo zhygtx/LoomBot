@@ -42,7 +42,7 @@ onMounted(loadNavigation)
   <main class="foundation-page">
     <header class="foundation-hero">
       <div>
-        <span class="foundation-eyebrow">Loom / Workspace</span>
+        <span class="foundation-eyebrow">LoomBot / Workspace</span>
         <h1>工作台</h1>
         <p>欢迎回来，{{ session.user?.email }}。从这里进入常用功能。</p>
       </div>

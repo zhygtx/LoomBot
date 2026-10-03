@@ -144,7 +144,7 @@ onMounted(loadNavigation)
         <RouterLink class="app-shell__brand-link" to="/" @click="closeMobileMenu">
           <span class="app-shell__brand-mark">L</span>
           <span class="app-shell__brand-copy">
-            <strong>Loom</strong>
+            <strong>LoomBot</strong>
             <small>Workspace</small>
           </span>
         </RouterLink>

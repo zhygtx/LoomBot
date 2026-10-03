@@ -9,9 +9,9 @@ defineProps<{
 <template>
   <main class="auth-shell">
     <section class="auth-shell__story" aria-label="产品介绍">
-      <RouterLink class="auth-shell__brand" to="/login" aria-label="Loom 首页">
+      <RouterLink class="auth-shell__brand" to="/login" aria-label="LoomBot 首页">
         <span class="auth-shell__brand-mark" aria-hidden="true">L</span>
-        <span>Loom</span>
+        <span>LoomBot</span>
       </RouterLink>
 
       <div class="auth-shell__story-content">

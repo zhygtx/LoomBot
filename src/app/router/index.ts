@@ -93,5 +93,5 @@ router.beforeEach((to) => {
 
 router.afterEach((to) => {
   const title = typeof to.meta.title === 'string' ? to.meta.title : ''
-  document.title = title ? `${title} · Loom` : 'Loom'
+  document.title = title ? `${title} · LoomBot` : 'LoomBot'
 })

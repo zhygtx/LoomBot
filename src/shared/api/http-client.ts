@@ -123,12 +123,12 @@ export async function apiRequest<T>(config: AxiosRequestConfig): Promise<T> {
         else if (status === 403) {
           /*
            * CORS 被拒时 Spring 会返回 403 + "Invalid CORS request"。这种情况报「没有操作权限」
-           * 会把人带偏 —— 看起来像权限没配，实际是来源不在白名单里（见 loom.cors.allowed-origins）。
+           * 会把人带偏 —— 看起来像权限没配，实际是来源不在白名单里（见 loombot.cors.allowed-origins）。
            * 这里按响应体把两种 403 分开说。
            */
           const body = typeof envelope === 'string' ? envelope : ''
           message = body.includes('Invalid CORS request')
-            ? '请求被跨域策略拒绝：当前页面来源不在后端白名单里（loom.cors.allowed-origins）'
+            ? '请求被跨域策略拒绝：当前页面来源不在后端白名单里（loombot.cors.allowed-origins）'
             : '没有操作权限'
         } else if (status && status >= 500) message = '服务器内部错误，请稍后重试'
         else message = '请求失败，请稍后重试'

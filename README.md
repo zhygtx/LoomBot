@@ -1,6 +1,6 @@
-# Loom Frontend
+# LoomBot Frontend
 
-这是 Loom 的新前端项目。旧 `web/` 暂时保留作交互与素材参考，新项目不继承旧前端架构。
+这是 LoomBot 的新前端项目。旧 `web/` 暂时保留作交互与素材参考，新项目不继承旧前端架构。
 
 ## 本地运行
 

@@ -19,7 +19,7 @@ const authOptions = useAuthOptions()
 /**
  * 开发期内置账号，方便本机直接登录测试。
  *
- * <p>它由 `V1__bootstrap_schema.sql` 种出来（`admin@loom.local` / `LoomAdmin123`）。
+ * <p>它由 `V1__bootstrap_schema.sql` 种出来（`admin@loombot.local` / `LoomBotAdmin123`）。
  * 只在开发构建里预填：生产构建时 `import.meta.env.DEV` 是 false，这里恒为 ''，
  * 密码不会进产物。
  *
@@ -28,7 +28,7 @@ const authOptions = useAuthOptions()
  * 只是省一次输入，不会把人卡住。
  */
 const DEV_ACCOUNT = import.meta.env.DEV
-  ? { email: 'admin@loom.local', password: 'LoomAdmin123' }
+  ? { email: 'admin@loombot.local', password: 'LoomBotAdmin123' }
   : { email: '', password: '' }
 
 const form = reactive({ email: DEV_ACCOUNT.email, password: DEV_ACCOUNT.password })
@@ -104,7 +104,7 @@ async function submit(): Promise<void> {
 <template>
   <AuthShell
     eyebrow="Welcome back"
-    title="登录 Loom"
+    title="登录 LoomBot"
     description="使用注册邮箱继续管理你的连接与自动化。"
   >
     <form class="auth-form" novalidate @submit.prevent="submit">

@@ -169,7 +169,7 @@ onMounted(load)
   justify-content: space-between;
   gap: 16px;
   padding: 16px;
-  border: 1px solid var(--loom-border-color, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--loombot-border-color, rgba(0, 0, 0, 0.12));
   border-radius: 10px;
 }
 
@@ -193,7 +193,7 @@ onMounted(load)
 
 .workflow-card__actions button {
   padding: 6px 14px;
-  border: 1px solid var(--loom-border-color, rgba(0, 0, 0, 0.12));
+  border: 1px solid var(--loombot-border-color, rgba(0, 0, 0, 0.12));
   border-radius: 6px;
   background: transparent;
   color: inherit;
@@ -207,20 +207,20 @@ onMounted(load)
 }
 
 .workflow-card__actions button.is-danger:hover {
-  border-color: var(--loom-danger-color, #d64545);
-  color: var(--loom-danger-color, #d64545);
+  border-color: var(--loombot-danger-color, #d64545);
+  color: var(--loombot-danger-color, #d64545);
 }
 
 .workflow-tag {
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 12px;
-  background: var(--loom-fill-color, rgba(0, 0, 0, 0.06));
+  background: var(--loombot-fill-color, rgba(0, 0, 0, 0.06));
 }
 
 .workflow-tag.is-on {
-  background: var(--loom-success-bg, rgba(22, 163, 74, 0.12));
-  color: var(--loom-success-color, #16a34a);
+  background: var(--loombot-success-bg, rgba(22, 163, 74, 0.12));
+  color: var(--loombot-success-color, #16a34a);
 }
 
 .workflow-tag.is-alert {

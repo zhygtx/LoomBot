@@ -37,7 +37,7 @@ const form = ref<{ key: string } & PluginRepoPayload>({
   key: '',
   url: '',
   branch: 'main',
-  scanner: 'loom',
+  scanner: 'loombot',
 })
 /** 非空表示正在编辑已有库，此时 key 不给改（它是身份）。 */
 const editingKey = ref<string | null>(null)
@@ -51,7 +51,7 @@ const KEY_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
 
 function resetForm(): void {
   editingKey.value = null
-  form.value = { key: '', url: '', branch: 'main', scanner: 'loom' }
+  form.value = { key: '', url: '', branch: 'main', scanner: 'loombot' }
   formError.value = ''
 }
 
@@ -62,7 +62,7 @@ function startEdit(repo: PluginRepo): void {
     key: repo.key,
     url: repo.url ?? '',
     branch: repo.branch ?? 'main',
-    scanner: repo.scanner ?? 'loom',
+    scanner: repo.scanner ?? 'loombot',
   }
   formError.value = ''
 }
@@ -245,7 +245,7 @@ onMounted(load)
               v-model="form.scanner"
               class="repo-panel__select-input"
             >
-              <option value="loom">loom（Loom 自己的格式）</option>
+              <option value="loombot">loombot（LoomBot 自己的格式）</option>
               <option value="local">local（用库文件夹里的 scanner.py）</option>
             </select>
             <span class="repo-panel__select-hint">

@@ -90,7 +90,7 @@ async function submit(): Promise<void> {
 
 <template>
   <AuthShell
-    eyebrow="Join Loom"
+    eyebrow="Join LoomBot"
     title="创建账号"
     description="当前阶段注册用户默认拥有站长权限，仅用于功能联调。"
   >

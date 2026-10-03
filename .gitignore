@@ -1,5 +1,5 @@
 # ========================================
-# Loom Frontend Git 排除规则
+# LoomBot Frontend Git 排除规则
 # ========================================
 
 # 依赖目录：通过 package.json 和 package-lock.json 重新安装。
