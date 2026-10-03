@@ -202,6 +202,7 @@ public class PluginCatalogService implements PluginCatalog {
                 version.getInstallPath(),
                 version.getEntryPoint(),
                 version.getPythonPath(),
+                version.getArtifactSha256(),
                 version.getRuntimeKey(),
                 version.getManifestJson());
     }

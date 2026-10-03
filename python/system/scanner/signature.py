@@ -71,6 +71,22 @@ def json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _metadata_of(item: Any) -> Any | None:
+    """判断 `Annotated[T, ...]` 里的一项是不是参数/字段说明。
+
+    只认字段而不认类型：异构插件库可能自带一套 SDK，它的 `Param` 不是 Loom 的这个类，
+    但字段（description / nullable / name）是一样的，运行期必须照样认出来，
+    否则 `Param(nullable=True)` 会被当成必填。
+    """
+    if isinstance(item, (Param, Attribute)):
+        return item
+    if item is None or isinstance(item, type):
+        return None
+    if hasattr(item, "description") or hasattr(item, "nullable"):
+        return item
+    return None
+
+
 def describe_annotation(annotation: Any) -> dict[str, Any]:
     """把一个类型注解解析成节点目录里的类型描述。"""
     result: dict[str, Any] = {
@@ -87,8 +103,9 @@ def describe_annotation(annotation: Any) -> dict[str, Any]:
     if hasattr(annotation, "__metadata__"):
         metadata = tuple(getattr(annotation, "__metadata__", ()) or ())
         for item in metadata:
-            if isinstance(item, (Param, Attribute)):
-                result["meta"] = item
+            meta = _metadata_of(item)
+            if meta is not None:
+                result["meta"] = meta
                 break
         inner = describe_annotation(getattr(annotation, "__origin__", annotation))
         if result["meta"] is not None:
@@ -185,6 +202,19 @@ def describe_parameters(func: Callable[..., Any]) -> tuple[list[dict[str, Any]],
             }
         )
     return parameters, var_positional, var_keyword
+
+
+def takes_ctx(func: Callable[..., Any]) -> bool:
+    """节点函数第一个位置参数叫 `ctx` 才注入执行上下文。
+
+    和 `describe_parameters` 跳过 `ctx` 是同一条规则：Loom 的节点是 `func(ctx, ...)`，
+    GeneralBot 的方法是 `self.method(...)`，用参数名区分，不额外引入标记。
+    """
+    try:
+        parameters = list(inspect.signature(func).parameters.values())
+    except (TypeError, ValueError):  # pragma: no cover - 极少数没有签名的可调用对象
+        return False
+    return bool(parameters) and parameters[0].name == "ctx"
 
 
 def describe_return(func: Callable[..., Any], entities: dict[str, dict[str, Any]]) -> dict[str, Any]:

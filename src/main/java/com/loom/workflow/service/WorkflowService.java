@@ -224,6 +224,8 @@ public class WorkflowService {
                 item.put("pluginVersionId", pluginVersion.getId());
                 item.put("installPath", pluginVersion.getInstallPath());
                 item.put("entryPoint", pluginVersion.getEntryPoint());
+                item.put("pythonPath", pluginVersion.getPythonPath());
+                item.put("artifactSha256", pluginVersion.getArtifactSha256());
                 item.put("pluginKey", pluginKeyOf(pluginVersion.getId()));
                 plugins.add(item);
             }

@@ -20,6 +20,19 @@ log = logging.getLogger("adapter-supervisor")
 INVOKE_TIMEOUT_SECONDS = 45.0
 
 
+def _needs_restart(current: DesiredConnection, desired: DesiredConnection) -> bool:
+    """插件代码或解释器换了就得重启工作进程。
+
+    同一个版本目录被原地覆盖时 `plugin_path` 不变，只看路径会一直跑旧代码，所以还要比
+    制品哈希；解释器（私有 venv 装没装出来）也可能在两次同步之间变化。
+    """
+    return (
+        current.plugin_path != desired.plugin_path
+        or current.python_path != desired.python_path
+        or current.artifact_sha256 != desired.artifact_sha256
+    )
+
+
 class WorkerHandle:
     def __init__(self, desired: DesiredConnection, python_command: str, event_ingress: EventIngress,
                  event_callback: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
@@ -35,12 +48,21 @@ class WorkerHandle:
         self.stderr_task: asyncio.Task[Any] | None = None
         self.ready = False
 
+    @property
+    def interpreter(self) -> str:
+        """插件代码一律用它自己的私有 venv 解释器跑；没有依赖时退回宿主 Python。
+
+        依赖隔离靠这一条：插件把包装进 `<pluginDir>/.venv`，这里就用那个解释器起进程，
+        宿主环境永远不需要为插件装包。
+        """
+        return self.desired.python_path or self.python_command
+
     async def start(self) -> None:
         if self.process and self.process.returncode is None:
             return
         self.ready = False
         self.process = await asyncio.create_subprocess_exec(
-            self.python_command, "-m", "system.adapter.worker", "--plugin-dir", self.desired.plugin_path,
+            self.interpreter, "-m", "system.adapter.worker", "--plugin-dir", self.desired.plugin_path,
             "--entry-point", self.desired.entry_point, "--adapter-type", self.desired.connection_type,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=str(Path(__file__).resolve().parents[2]),
@@ -159,7 +181,7 @@ class AdapterSupervisor:
         if not worker:
             worker = WorkerHandle(desired, self.config.python_command, self.ingress, self._on_worker_message)
             self.workers[worker_key] = worker
-        elif worker.desired.plugin_path != desired.plugin_path:
+        elif _needs_restart(worker.desired, desired):
             await worker.stop()
             worker.desired = desired
         self.connection_workers[desired.connection_id] = worker

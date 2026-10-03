@@ -160,6 +160,8 @@ public class AdapterControlClient {
         node.put("pluginVersionId", command.pluginVersionId());
         node.put("pluginPath", command.pluginPath());
         node.put("entryPoint", command.entryPoint());
+        node.put("pythonPath", command.pythonPath());
+        node.put("artifactSha256", command.artifactSha256());
         node.put("revision", command.desiredRevision());
         node.put("enabled", command.enabled());
         node.put("pluginKey", command.pluginKey());

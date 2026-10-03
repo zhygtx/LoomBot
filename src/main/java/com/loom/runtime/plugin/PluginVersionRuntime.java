@@ -15,5 +15,7 @@ public record PluginVersionRuntime(
         String installPath,
         String entryPoint,
         String pythonPath,
+        /** 制品哈希：同一版本目录被原地覆盖时它会变，运行期据此判断"要不要重载"。 */
+        String artifactSha256,
         String runtimeKey,
         String manifestJson) {}

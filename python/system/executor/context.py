@@ -6,8 +6,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-import httpx
-
 from system.executor.errors import ActionError
 
 
@@ -47,6 +45,10 @@ class ActionClient:
         self.timeout = timeout
 
     async def call(self, connection_id: int, node_key: str, params: dict[str, Any]) -> Any:
+        # httpx 只在宿主进程用得到：节点宿主进程要复用 ExecutionContext，不能被这个依赖拖住，
+        # 所以 import 放在方法里。
+        import httpx
+
         url = f"{self.base_url}/internal/actions/{int(connection_id)}"
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:

@@ -46,6 +46,11 @@ build/
 __pycache__/
 *.py[cod]
 .venv/
+# 插件库整个在 git 外：它是"数据 + 集成代码"（库的工作副本、repo.json、库自己的子扫描器），
+# 靠文件夹热插拔，不进 Loom 的版本库。加一个库 = 放一个文件夹，删一个库 = 拿走文件夹。
 /python/plugins/
 /python/logs/
 /python/artifacts/
+# 插件库机器人的本地密钥（Gitee token、AI key）与运行状态：不进版本库
+/python/secrets/
+/python/_work/

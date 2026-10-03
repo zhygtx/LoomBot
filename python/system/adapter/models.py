@@ -16,6 +16,8 @@ class DesiredConnection:
     plugin_version: str
     plugin_path: str
     entry_point: str
+    python_path: str
+    artifact_sha256: str
     connection_type: str
     direction: str
     config: dict[str, Any] = field(default_factory=dict)
@@ -31,6 +33,8 @@ class DesiredConnection:
             enabled=bool(body.get("enabled", False)), plugin_version_id=int(body.get("pluginVersionId", 0)),
             plugin_key=str(adapter.get("package", body.get("pluginKey", ""))), plugin_version=str(adapter.get("version", body.get("pluginVersion", ""))),
             plugin_path=str(body.get("pluginPath", "")), entry_point=str(body.get("entryPoint", "main.py")),
+            python_path=str(body.get("pythonPath") or ""),
+            artifact_sha256=str(body.get("artifactSha256") or ""),
             connection_type=str(adapter.get("type", body.get("connectionType", ""))),
             direction=str(transport.get("direction", body.get("direction", "FORWARD"))).upper(), config=dict(body.get("config") or {}),
             endpoint_path=transport.get("endpointId", body.get("endpointPath")), config_hash=body.get("configHash"))

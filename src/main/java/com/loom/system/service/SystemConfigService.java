@@ -50,6 +50,19 @@ public class SystemConfigService {
     public static final String WORKFLOW_LOG_SUMMARY_RETENTION_DAYS =
             "workflow.log.summary-retention-days";
 
+    // ---------- 插件库机器人 ----------
+    /** 总开关。默认关闭：它只在有人提交插件时才需要。 */
+    public static final String PLUGIN_MARKET_ENABLED = "plugin.market.enabled";
+
+    /** 插件库的 git 地址与分支。 */
+    public static final String PLUGIN_MARKET_REPO = "plugin.market.repo";
+
+    /** AI 的地址与模型。**密钥不在这里**——它在服务器的 python/secrets/plugin-market.json。 */
+    public static final String PLUGIN_MARKET_AI = "plugin.market.ai";
+
+    /** 闸门开关：auto_merge / auto_publish / approve_before_merge / merge_method。 */
+    public static final String PLUGIN_MARKET_GATES = "plugin.market.gates";
+
     /**
      * 值必须保持为 true 的布尔配置：key → 不允许关掉的理由。
      *
@@ -147,6 +160,18 @@ public class SystemConfigService {
     public int nonNegativeInt(String key, String field, int fallback) {
         Integer value = intField(key, field);
         return value != null && value >= 0 ? value : fallback;
+    }
+
+    /**
+     * 读一条配置的原始 JSON 文本；配置项不存在时返回 {@code null}。
+     *
+     * <p>和 {@link #require} 不同：这条路径容忍"配置还没种上"，缺了怎么办由调用方决定。
+     */
+    public String rawValue(String key) {
+        SystemConfig config =
+                mapper.selectOne(
+                        Wrappers.<SystemConfig>lambdaQuery().eq(SystemConfig::getConfigKey, key));
+        return config == null ? null : config.getConfigValue();
     }
 
     /** 取配置对象里的一个整数字段；配置项缺失、值不是对象、字段缺失或不是数字都返回 null。 */

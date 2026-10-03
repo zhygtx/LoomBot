@@ -4,24 +4,21 @@ import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * 插件仓库同步配置。
+ * 插件同步配置。
  *
- * @param repositoryKey 仓库稳定标识
- * @param repositoryUrl 公共 Git 仓库地址；为空时只扫描本地目录
- * @param branch 分支
- * @param localPath 本地仓库目录；相对路径按 Java 进程工作目录解析
+ * <p>只配"插件库放在哪"和同步节奏：**每个库自己的声明（仓库地址、分支、子扫描器）在库文件夹的 `repo.json` 里**。所以加一个插件库 = 往 plugins
+ * 根目录放一个文件夹，不用改配置、也不用重启。
+ *
+ * @param pluginsRoot 插件库根目录；下面的每个子目录是一个插件库
  * @param syncOnStart 启动时是否同步
- * @param autoSync 是否周期性自动扫描仓库变化
+ * @param autoSync 是否周期性自动扫描
  * @param syncInterval 自动扫描间隔
  * @param commandTimeoutSeconds git 命令超时
  * @param dependencyInstallTimeoutSeconds 单版本依赖安装超时
  */
 @ConfigurationProperties(prefix = "loom.plugin")
 public record PluginProperties(
-        String repositoryKey,
-        String repositoryUrl,
-        String branch,
-        String localPath,
+        String pluginsRoot,
         Boolean syncOnStart,
         Boolean autoSync,
         Duration syncInterval,
@@ -29,13 +26,10 @@ public record PluginProperties(
         Integer dependencyInstallTimeoutSeconds) {
 
     public PluginProperties {
-        repositoryKey =
-                repositoryKey == null || repositoryKey.isBlank()
-                        ? "loom-public-plugins"
-                        : repositoryKey.strip();
-        repositoryUrl = repositoryUrl == null ? "" : repositoryUrl.strip();
-        branch = branch == null || branch.isBlank() ? "main" : branch.strip();
-        localPath = localPath == null || localPath.isBlank() ? "plugins" : localPath.strip();
+        pluginsRoot =
+                pluginsRoot == null || pluginsRoot.isBlank()
+                        ? "python/plugins"
+                        : pluginsRoot.strip();
         syncOnStart = syncOnStart == null || syncOnStart;
         autoSync = autoSync == null || autoSync;
         syncInterval =

@@ -18,7 +18,9 @@ public final class PluginManifestReader {
     public static PluginManifest read(Path pluginDir) throws IOException {
         Path manifest = pluginDir.resolve("plugin.toml");
         if (!Files.isRegularFile(manifest)) {
-            throw new IOException("缺少 plugin.toml: " + manifest);
+            // 异构插件库不一定有 plugin.toml（比如 GeneralBot 用 plugin.json）。
+            // 那种情况返回空清单：插件身份来自库索引，显示名和描述由子扫描器产出的目录提供。
+            return EMPTY;
         }
         TomlParseResult toml = Toml.parse(manifest);
         if (toml.hasErrors()) {
@@ -79,6 +81,12 @@ public final class PluginManifestReader {
         String value = toml.getString(key);
         return value == null || value.isBlank() ? null : value.strip();
     }
+
+    /** 没有 plugin.toml 时的空清单。 */
+    private static final PluginManifest EMPTY =
+            new PluginManifest(
+                    null, null, null, null, null, null, List.of(), null, null, null, null, null,
+                    null, null, null);
 
     private static String firstText(org.tomlj.TomlTable table, String... keys) {
         for (String key : keys) {

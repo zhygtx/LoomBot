@@ -183,8 +183,8 @@ CREATE TABLE sys_config (
 CREATE TABLE plugin_repository (
     id               BIGINT        NOT NULL,
     repo_key         VARCHAR(64)   NOT NULL,
-    repo_url         VARCHAR(512)  NULL,
-    branch           VARCHAR(128)  NOT NULL DEFAULT 'main',
+    -- 声明（url / branch / scanner）在插件库文件夹的 repo.json 里，这里只存同步状态。
+    -- local_path 是唯一的例外：它是"这次同步时工作副本在哪"，出问题时用来定位。
     local_path       VARCHAR(512)  NOT NULL,
     last_commit_hash VARCHAR(128)  NULL,
     last_pull_time   DATETIME      NULL,
@@ -662,7 +662,15 @@ INSERT INTO sys_config (id, config_key, config_value, config_group, name, descri
     (5, 'workflow.log.retention-days', '{"days": 7}', 'WORKFLOW', '执行日志保留天数',
      '原始执行日志（含节点输入输出）保留多少天，清理任务每小时按这个值执行。调小能降低日志检索的扫描开销，代价是能回看的历史变短', 1),
     (6, 'workflow.log.summary-retention-days', '{"days": 0}', 'WORKFLOW', '执行汇总保留天数',
-     '按小时汇总保留多少天，填 0 表示永久保留（默认）。汇总只有计数和耗时、不含节点内容，行数只跟工作流数量有关，留很久也很小', 1);
+     '按小时汇总保留多少天，填 0 表示永久保留（默认）。汇总只有计数和耗时、不含节点内容，行数只跟工作流数量有关，留很久也很小', 1),
+    (7, 'plugin.market.enabled', '{"enabled": false}', 'PLUGIN', '插件库机器人',
+     '开启后由后台定时跑插件库的 PR 审核与发布。默认关闭——它只在有人提交插件时才需要', 1),
+    (8, 'plugin.market.repo', '{"url": "", "branch": "main"}', 'PLUGIN', '插件库仓库',
+     '插件库的 git 地址与分支，形如 https://gitee.com/用户/仓库.git；地址留空则机器人不启动', 1),
+    (9, 'plugin.market.ai', '{"enabled": true, "base_url": "https://api.deepseek.com", "model": "deepseek-flash", "json_mode": true}', 'PLUGIN', '插件库机器人的 AI',
+     '用来补全节点框架内容、审核代码。密钥不在这里——它在服务器的 python/secrets/plugin-market.json 里', 1),
+    (10, 'plugin.market.gates', '{"auto_merge": true, "auto_publish": true, "approve_before_merge": true, "merge_method": "squash"}', 'PLUGIN', '插件库机器人的闸门',
+     'auto_merge=false 只审不合；auto_publish=false 只合不发。建议先只审不合跑几天，看看闸门判得准不准', 1);
 
 
 -- ============================================================================

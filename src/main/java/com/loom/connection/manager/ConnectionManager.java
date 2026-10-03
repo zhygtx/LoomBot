@@ -236,6 +236,8 @@ public class ConnectionManager {
                 pluginVersion == null ? null : pluginVersion.pluginVersion(),
                 pluginVersion == null ? null : pluginVersion.installPath(),
                 type == null ? null : type.entryPoint(),
+                pluginVersion == null ? null : pluginVersion.pythonPath(),
+                pluginVersion == null ? null : pluginVersion.artifactSha256(),
                 entity.getConnectionType(),
                 direction,
                 config,

@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from system.scanner.signature import describe_parameters
 from system.executor import expressions
 from system.executor.context import ActionClient, ExecutionContext
 from system.executor.convert import convert
@@ -397,15 +396,17 @@ class WorkflowEngine:
             info = plugin_versions.get(plugin_version_id)
             if not info:
                 raise DefinitionError(f"定义引用的插件版本未登记: {plugin_version_id}")
-            runtime = self.plugins.get(
+            runtime = await self.plugins.get(
                 plugin_version_id,
                 str(info.get("installPath") or ""),
                 str(info.get("pluginKey") or ""),
+                str(info.get("pythonPath") or ""),
+                str(info.get("artifactSha256") or ""),
             )
             spec = runtime.nodes.get(node_key)
             if spec is None:
                 raise DefinitionError(f"插件版本 {plugin_version_id} 没有节点 {node_key}")
-            args, kwargs, input_log = self._bind_parameters(spec.func, node, context)
+            args, kwargs, input_log = self._bind_parameters(spec.parameters, node, context)
             trace["input"] = self.encode(outcome, input_log)
             ctx = ExecutionContext(
                 execution_id=str(job.get("executionId") or ""),
@@ -453,9 +454,13 @@ class WorkflowEngine:
         return params
 
     def _bind_parameters(
-        self, func: Any, node: dict[str, Any], context: dict[str, Any]
+        self, parameters: list[dict[str, Any]], node: dict[str, Any], context: dict[str, Any]
     ) -> tuple[list[Any], dict[str, Any], dict[str, Any]]:
-        parameters, _, _ = describe_parameters(func)
+        """按节点自己的参数签名绑定值。
+
+        签名来自插件侧内省（节点进程报回来的），宿主不 import 插件代码，所以这里不能再
+        自己去 inspect 那个函数。
+        """
         inputs = {
             str(item.get("paramName")): item for item in node.get("inputs") or []
         }

@@ -16,15 +16,19 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * 调用 Python 扫描入口导出插件目录。
+ * 调用主扫描器，把一个插件库扫成统一目录。
  *
- * <p>一次调用覆盖该插件版本的全部适配器、工作流节点和实体。扫描只读取模块与装饰器元数据，不建立连接、不访问网络。
+ * <p>**一次扫完整个库**，而不是一个插件起一次进程：一个有几十个插件的库，原来要起几十次 Python， 每次约 100ms，全量重扫时这个开销比解析本身还大。
+ *
+ * <p>主扫描器（`system.scanner.describe`）自己不做任何自定义解析，它按名字找到插件库声明的子扫描器， 由子扫描器负责"这个库的目录长什么样"。所以 Java
+ * 这边完全不用区分插件库来自哪种格式。
  */
 @Component
 public class PluginCatalogScanner {
 
     private static final Logger log = LoggerFactory.getLogger(PluginCatalogScanner.class);
-    private static final long TIMEOUT_SECONDS = 120L;
+    private static final long TIMEOUT_SECONDS = 300L;
+    private static final String DEFAULT_SCANNER = "loom";
 
     private final AdapterProperties adapterProperties;
     private final ObjectMapper objectMapper;
@@ -34,16 +38,25 @@ public class PluginCatalogScanner {
         this.objectMapper = objectMapper;
     }
 
-    /** 扫描一个插件目录，返回节点目录。 */
-    public Catalog scan(Path pluginDir) {
+    /**
+     * 扫描一个插件库文件夹。
+     *
+     * @param repoFolder 插件库文件夹（含 repo/ 与 repo.json）
+     * @param scanner 子扫描器名字：内置的 loom，或 local（库文件夹里的 scanner.py）
+     */
+    public RepoCatalog scanRepository(Path repoFolder, String scanner) {
         Path workingDirectory =
                 Path.of(adapterProperties.workingDirectory()).toAbsolutePath().normalize();
+        String scannerName =
+                scanner == null || scanner.isBlank() ? DEFAULT_SCANNER : scanner.strip();
         List<String> command =
                 List.of(
                         adapterProperties.pythonCommand(),
                         "-m",
                         "system.scanner.describe",
-                        pluginDir.toString());
+                        repoFolder.toString(),
+                        "--scanner",
+                        scannerName);
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(workingDirectory.toFile());
         builder.environment().put("PYTHONIOENCODING", "utf-8");
@@ -56,19 +69,19 @@ public class PluginCatalogScanner {
             byte[] stdout = process.getInputStream().readAllBytes();
             if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                throw new IllegalStateException("插件目录扫描超时: " + pluginDir);
+                throw new IllegalStateException("插件库扫描超时: " + repoFolder);
             }
             String output = new String(stdout, StandardCharsets.UTF_8);
             if (process.exitValue() != 0) {
                 String reason = Files.readString(errorFile.toPath(), StandardCharsets.UTF_8);
-                throw new IllegalStateException("插件目录扫描失败: " + reason.strip());
+                throw new IllegalStateException("插件库扫描失败: " + reason.strip());
             }
-            return new Catalog(objectMapper.readTree(output));
+            return new RepoCatalog(objectMapper.readTree(output));
         } catch (IOException e) {
-            throw new IllegalStateException("插件目录扫描失败: " + e.getMessage(), e);
+            throw new IllegalStateException("插件库扫描失败: " + e.getMessage(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("插件目录扫描被中断", e);
+            throw new IllegalStateException("插件库扫描被中断", e);
         } finally {
             if (errorFile != null) {
                 try {
@@ -80,7 +93,45 @@ public class PluginCatalogScanner {
         }
     }
 
-    /** 扫描结果。 */
+    /** 整份库目录：一个库里的全部插件与版本。 */
+    public record RepoCatalog(JsonNode root) {
+
+        public List<ScannedPlugin> plugins() {
+            List<ScannedPlugin> plugins = new ArrayList<>();
+            for (JsonNode plugin : root.path("plugins")) {
+                List<ScannedVersion> versions = new ArrayList<>();
+                for (JsonNode version : plugin.path("versions")) {
+                    versions.add(
+                            new ScannedVersion(
+                                    text(version.path("version")),
+                                    text(version.path("path")),
+                                    text(version.path("publishedTime")),
+                                    new Catalog(version.path("catalog"))));
+                }
+                plugins.add(
+                        new ScannedPlugin(
+                                text(plugin.path("key")),
+                                text(plugin.path("namespace")),
+                                versions));
+            }
+            return plugins;
+        }
+
+        private static String text(JsonNode node) {
+            return node == null || node.isMissingNode() || node.isNull()
+                    ? ""
+                    : node.asString("").strip();
+        }
+    }
+
+    /** 库里的一个插件。 */
+    public record ScannedPlugin(String key, String namespace, List<ScannedVersion> versions) {}
+
+    /** 插件的一个版本，带上它的节点目录。 */
+    public record ScannedVersion(
+            String version, String path, String publishedTime, Catalog catalog) {}
+
+    /** 单个插件版本的节点目录。 */
     public record Catalog(JsonNode root) {
 
         public String pluginKey() {
@@ -89,6 +140,15 @@ public class PluginCatalogScanner {
 
         public String pluginVersion() {
             return text(root.path("pluginVersion"));
+        }
+
+        /** 子扫描器给出的显示名；异构库没有 plugin.toml 时用它。 */
+        public String pluginName() {
+            return text(root.path("pluginName"));
+        }
+
+        public String pluginDescription() {
+            return text(root.path("pluginDescription"));
         }
 
         public List<String> capabilities() {

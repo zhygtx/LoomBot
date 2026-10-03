@@ -3,6 +3,7 @@ package com.loom.plugin.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.loom.plugin.PluginProperties;
+import com.loom.plugin.PluginRepoDefinition;
 import com.loom.plugin.domain.Plugin;
 import com.loom.plugin.domain.PluginCapability;
 import com.loom.plugin.domain.PluginConnectionType;
@@ -21,6 +22,7 @@ import com.loom.plugin.mapper.PluginVersionMapper;
 import com.loom.plugin.sync.PluginCatalogScanner;
 import com.loom.plugin.sync.PluginDependencyInstaller;
 import com.loom.plugin.sync.PluginManifestReader;
+import com.loom.plugin.sync.PluginRepoDiscovery;
 import com.loom.plugin.sync.PluginRepositorySynchronizer;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -67,6 +69,7 @@ public class PluginSyncService {
     private static final int CATALOG_VERSION = 2;
 
     private final PluginProperties properties;
+    private final PluginRepoDiscovery discovery;
     private final PluginRepositorySynchronizer repositorySynchronizer;
     private final PluginDependencyInstaller dependencyInstaller;
     private final PluginCatalogScanner catalogScanner;
@@ -84,6 +87,7 @@ public class PluginSyncService {
 
     public PluginSyncService(
             PluginProperties properties,
+            PluginRepoDiscovery discovery,
             PluginRepositorySynchronizer repositorySynchronizer,
             PluginDependencyInstaller dependencyInstaller,
             PluginCatalogScanner catalogScanner,
@@ -98,6 +102,7 @@ public class PluginSyncService {
             TransactionTemplate transactionTemplate,
             ApplicationEventPublisher events) {
         this.properties = properties;
+        this.discovery = discovery;
         this.repositorySynchronizer = repositorySynchronizer;
         this.dependencyInstaller = dependencyInstaller;
         this.catalogScanner = catalogScanner;
@@ -142,66 +147,94 @@ public class PluginSyncService {
 
     public void sync() throws IOException, InterruptedException {
         if (!syncing.compareAndSet(false, true)) {
-            log.debug("插件仓库正在同步，跳过本次触发");
+            log.debug("插件库正在同步，跳过本次触发");
             return;
         }
         try {
-            PluginRepository repository = ensureRepository();
-            PluginRepositorySynchronizer.RepositorySnapshot snapshot;
-            try {
-                snapshot = repositorySynchronizer.synchronize();
-                repository.setLastPullTime(LocalDateTime.now());
-            } catch (IOException | InterruptedException e) {
-                repository.setLastError(trim(e.getMessage(), 1024));
-                repositoryMapper.updateById(repository);
-                throw e;
-            }
-
-            // 快照键 = commit + 扫描语义版本。扫描器属于框架代码，插件目录可能一个字都没改，
-            // 但参数必填规则、返回字段展开这些行为变了，目录就必须重扫，否则一直沿用旧结果。
-            String scanKey = snapshot.commitHash() + "@catalog" + CATALOG_VERSION;
-            if (scanKey.equals(repository.getLastCommitHash())
-                    && repository.getLastError() == null
-                    && hasRegisteredConnectionTypes()) {
-                log.info("插件仓库 commit 未变化，跳过扫描: {}", snapshot.commitHash());
-                repository.setLastScanTime(LocalDateTime.now());
-                repositoryMapper.updateById(repository);
+            List<PluginRepoDefinition> definitions = discovery.discover();
+            if (definitions.isEmpty()) {
+                log.debug("没有发现插件库: {}", properties.pluginsRoot());
                 return;
             }
-
-            try {
-                // 节点变更事件在事务提交之后再发：监听方要写工作流提醒、动 Redis 和定时快照，
-                // 这些都不是事务性的，放在事务里会变成"插件回滚了但提醒留下了"。
-                List<PluginNodesChangedEvent> pendingChanges = new ArrayList<>();
-                transactionTemplate.executeWithoutResult(
-                        status -> applySnapshot(repository, snapshot, pendingChanges));
-                repository.setLastCommitHash(scanKey);
-                repository.setLastScanTime(LocalDateTime.now());
-                repository.setLastError(null);
-                repositoryMapper.updateById(repository);
-                log.info("插件仓库同步完成: commit={}", snapshot.commitHash());
-                pendingChanges.forEach(events::publishEvent);
-            } catch (RuntimeException e) {
-                repository.setLastError(trim(e.getMessage(), 1024));
-                repositoryMapper.updateById(repository);
-                throw e;
+            // 一个库失败不该拖垮其它库：错误记在它自己的状态行上，下个周期它自己重试
+            for (PluginRepoDefinition definition : definitions) {
+                try {
+                    syncRepository(definition);
+                } catch (IOException | InterruptedException e) {
+                    log.warn("插件库同步失败: key={} error={}", definition.key(), e.getMessage());
+                } catch (RuntimeException e) {
+                    log.warn("插件库同步失败: key={} error={}", definition.key(), e.getMessage());
+                    markError(definition.key(), e.getMessage());
+                }
             }
         } finally {
             syncing.set(false);
         }
     }
 
-    private void applySnapshot(
-            PluginRepository repository,
-            PluginRepositorySynchronizer.RepositorySnapshot snapshot,
-            List<PluginNodesChangedEvent> pendingChanges) {
-        PluginIndex index = readIndex(snapshot.root());
-        if (index.plugins() == null || index.plugins().isEmpty()) {
-            log.warn("插件仓库没有登记任何插件: {}", snapshot.root());
+    /** 同步一个插件库：拉工作副本 → 整库扫描 → 落库。 */
+    private void syncRepository(PluginRepoDefinition definition)
+            throws IOException, InterruptedException {
+        PluginRepository state = ensureState(definition.key());
+        PluginRepositorySynchronizer.RepositorySnapshot snapshot;
+        try {
+            snapshot = repositorySynchronizer.synchronize(definition);
+        } catch (IOException | InterruptedException e) {
+            markError(state, e.getMessage());
+            throw e;
+        }
+        state.setLocalPath(definition.workingCopy().toString());
+        state.setLastPullTime(LocalDateTime.now());
+
+        // 快照键 = commit + 扫描语义版本。扫描器属于框架代码，插件目录可能一个字都没改，
+        // 但参数必填规则、返回字段展开这些行为变了，目录就必须重扫，否则一直沿用旧结果。
+        String scanKey = snapshot.commitHash() + "@catalog" + CATALOG_VERSION;
+        if (scanKey.equals(state.getLastCommitHash())
+                && state.getLastError() == null
+                && hasRegisteredConnectionTypes()) {
+            log.info("插件库内容未变化，跳过扫描: key={} commit={}", definition.key(), snapshot.commitHash());
+            state.setLastScanTime(LocalDateTime.now());
+            repositoryMapper.updateById(state);
             return;
         }
+
+        PluginCatalogScanner.RepoCatalog catalog;
+        try {
+            catalog = catalogScanner.scanRepository(definition.folder(), definition.scanner());
+        } catch (RuntimeException e) {
+            markError(state, e.getMessage());
+            throw e;
+        }
+
+        List<PluginNodesChangedEvent> pendingChanges = new ArrayList<>();
+        try {
+            transactionTemplate.executeWithoutResult(
+                    status -> applyCatalog(state, snapshot, catalog, pendingChanges));
+            state.setLastCommitHash(scanKey);
+            state.setLastScanTime(LocalDateTime.now());
+            state.setLastError(null);
+            repositoryMapper.updateById(state);
+            log.info(
+                    "插件库同步完成: key={} commit={} plugins={}",
+                    definition.key(),
+                    snapshot.commitHash(),
+                    catalog.plugins().size());
+            // 节点变更事件在事务提交之后再发：监听方要写工作流提醒、动 Redis 和定时快照，
+            // 这些都不是事务性的，放在事务里会变成"插件回滚了但提醒留下了"。
+            pendingChanges.forEach(events::publishEvent);
+        } catch (RuntimeException e) {
+            markError(state, e.getMessage());
+            throw e;
+        }
+    }
+
+    private void applyCatalog(
+            PluginRepository repository,
+            PluginRepositorySynchronizer.RepositorySnapshot snapshot,
+            PluginCatalogScanner.RepoCatalog catalog,
+            List<PluginNodesChangedEvent> pendingChanges) {
         // 按仓库取全部插件再按 plugin_key 索引：plugin_key 现在可能带命名空间前缀（alice.text-tools），
-        // 拿 index.json 里的裸 key 去 IN 查是查不到的。
+        // 拿索引里的裸 key 去 IN 查是查不到的。
         Map<String, Plugin> pluginsByKey =
                 pluginMapper
                         .selectList(
@@ -230,16 +263,13 @@ public class PluginSyncService {
                                             version));
         }
         SyncBatch batch = new SyncBatch();
-        for (PluginIndexEntry pluginEntry : index.plugins()) {
-            if (pluginEntry.key() == null || pluginEntry.key().isBlank()) {
-                throw new IllegalArgumentException("index.json 存在缺少 key 的插件");
+        for (PluginCatalogScanner.ScannedPlugin scanned : catalog.plugins()) {
+            if (scanned.key().isBlank()) {
+                throw new IllegalArgumentException("插件库返回了缺少 key 的插件");
             }
-            if (pluginEntry.versions() == null || pluginEntry.versions().isEmpty()) {
-                continue;
-            }
-            Plugin plugin = upsertPlugin(repository, pluginEntry, pluginsByKey);
-            for (PluginVersionEntry versionEntry : pluginEntry.versions()) {
-                scanVersion(plugin, pluginEntry, versionEntry, snapshot, versionsByKey, batch);
+            Plugin plugin = upsertPlugin(repository, scanned, pluginsByKey);
+            for (PluginCatalogScanner.ScannedVersion version : scanned.versions()) {
+                scanVersion(plugin, scanned, version, snapshot, versionsByKey, batch);
             }
         }
         flushBatch(batch);
@@ -247,9 +277,11 @@ public class PluginSyncService {
     }
 
     private Plugin upsertPlugin(
-            PluginRepository repository, PluginIndexEntry entry, Map<String, Plugin> pluginsByKey) {
-        String rawKey = entry.key().strip();
-        String namespace = entry.namespace() == null ? "" : entry.namespace().strip();
+            PluginRepository repository,
+            PluginCatalogScanner.ScannedPlugin scanned,
+            Map<String, Plugin> pluginsByKey) {
+        String rawKey = scanned.key().strip();
+        String namespace = scanned.namespace() == null ? "" : scanned.namespace().strip();
         // 声明了命名空间就拼进 key：alice.text-tools。
         // 同一个仓库里不同作者的同名插件因此是两个不同的插件，各有各的版本和节点目录。
         String key = namespace.isEmpty() ? rawKey : namespace + "." + rawKey;
@@ -269,15 +301,15 @@ public class PluginSyncService {
 
     private void scanVersion(
             Plugin plugin,
-            PluginIndexEntry pluginEntry,
-            PluginVersionEntry versionEntry,
+            PluginCatalogScanner.ScannedPlugin scanned,
+            PluginCatalogScanner.ScannedVersion scannedVersion,
             PluginRepositorySynchronizer.RepositorySnapshot snapshot,
             Map<VersionKey, PluginVersion> versionsByKey,
             SyncBatch batch) {
-        if (versionEntry.version() == null || versionEntry.version().isBlank()) {
-            throw new IllegalArgumentException("插件 " + pluginEntry.key() + " 缺少版本号");
+        if (scannedVersion.version() == null || scannedVersion.version().isBlank()) {
+            throw new IllegalArgumentException("插件 " + scanned.key() + " 缺少版本号");
         }
-        Path pluginDir = resolveInside(snapshot.root(), versionEntry.path());
+        Path pluginDir = resolveInside(snapshot.root(), scannedVersion.path());
         PluginManifestReader.PluginManifest manifest;
         String artifactSha256;
         try {
@@ -286,17 +318,18 @@ public class PluginSyncService {
         } catch (IOException e) {
             throw new IllegalStateException("扫描插件版本失败: " + pluginDir, e);
         }
-        if (manifest.key() != null && !manifest.key().equals(pluginEntry.key())) {
-            throw new IllegalArgumentException("plugin.toml key 与 index.json 不一致: " + pluginDir);
+        // 异构库没有 plugin.toml（比如 GeneralBot 用 plugin.json），key/version 由库索引和清单各自给出，
+        // 只有清单存在时才要求两边一致。
+        if (manifest.key() != null && !manifest.key().equals(scanned.key())) {
+            throw new IllegalArgumentException("plugin.toml key 与库索引不一致: " + pluginDir);
         }
-        if (manifest.version() != null && !manifest.version().equals(versionEntry.version())) {
-            throw new IllegalArgumentException(
-                    "plugin.toml version 与 index.json 不一致: " + pluginDir);
+        if (manifest.version() != null && !manifest.version().equals(scannedVersion.version())) {
+            throw new IllegalArgumentException("plugin.toml version 与库索引不一致: " + pluginDir);
         }
 
-        updatePluginMetadata(plugin, manifest, pluginEntry);
+        updatePluginMetadata(plugin, manifest, scannedVersion.catalog(), scanned.key());
 
-        VersionKey versionKey = new VersionKey(plugin.getId(), versionEntry.version());
+        VersionKey versionKey = new VersionKey(plugin.getId(), scannedVersion.version());
         PluginVersion existing = versionsByKey.get(versionKey);
         if (existing != null && artifactSha256.equals(existing.getArtifactSha256())) {
             return;
@@ -304,13 +337,13 @@ public class PluginSyncService {
 
         List<AdapterDeclaration> adapters = adapterDeclarations(pluginDir, manifest);
         String manifestJson =
-                manifestJson(plugin, manifest, versionEntry, adapters, artifactSha256);
+                manifestJson(plugin, manifest, scannedVersion, adapters, artifactSha256);
         PluginVersion version;
         if (existing == null) {
             version = new PluginVersion();
             version.setId(IdWorker.getId());
             version.setPluginId(plugin.getId());
-            version.setVersion(versionEntry.version());
+            version.setVersion(scannedVersion.version());
             version.setRuntimeKey("runtime:" + version.getId());
             batch.newVersions.add(version);
             versionsByKey.put(versionKey, version);
@@ -338,20 +371,20 @@ public class PluginSyncService {
         } catch (IOException e) {
             throw new IllegalStateException("插件依赖安装失败: " + pluginDir, e);
         }
-        version.setPublishedTime(parseTime(versionEntry.publishedTime()));
+        version.setPublishedTime(parseTime(scannedVersion.publishedTime()));
         version.setSyncedTime(LocalDateTime.now());
 
         appendCapabilities(batch, version.getId(), manifest.capabilities());
         for (AdapterDeclaration adapter : adapters) {
             appendConnectionType(batch, version.getId(), plugin, manifest, adapter);
         }
-        appendCatalogNodes(batch, version.getId(), pluginDir, adapters);
+        appendCatalogNodes(batch, version.getId(), pluginDir, adapters, scannedVersion.catalog());
         appendDependencies(batch, version.getId(), pluginDir);
         log.info(
                 "插件版本已{}: {}-{}, adapters={}",
                 existing == null ? "登记" : "覆盖",
-                pluginEntry.key(),
-                versionEntry.version(),
+                scanned.key(),
+                scannedVersion.version(),
                 adapters.stream().map(AdapterDeclaration::connectionType).toList());
     }
 
@@ -363,16 +396,29 @@ public class PluginSyncService {
     }
 
     private void updatePluginMetadata(
-            Plugin plugin, PluginManifestReader.PluginManifest manifest, PluginIndexEntry entry) {
-        String name = manifest.name() == null ? entry.key() : manifest.name();
+            Plugin plugin,
+            PluginManifestReader.PluginManifest manifest,
+            PluginCatalogScanner.Catalog catalog,
+            String rawKey) {
+        // 清单里的名字优先。异构库没有 plugin.toml（GeneralBot 用 plugin.json），
+        // 就用子扫描器产出的目录里的名字，再不行退回库索引里的裸 key。
+        String catalogName = catalog.pluginName();
+        String name =
+                manifest.name() != null
+                        ? manifest.name()
+                        : (catalogName.isBlank() ? rawKey : catalogName);
+        String description =
+                manifest.description() != null
+                        ? manifest.description()
+                        : catalog.pluginDescription();
         if (java.util.Objects.equals(plugin.getName(), name)
-                && java.util.Objects.equals(plugin.getDescription(), manifest.description())
+                && java.util.Objects.equals(plugin.getDescription(), description)
                 && java.util.Objects.equals(plugin.getHomepage(), manifest.homepage())
                 && java.util.Objects.equals(plugin.getAuthor(), manifest.author())) {
             return;
         }
         plugin.setName(name);
-        plugin.setDescription(manifest.description());
+        plugin.setDescription(description);
         plugin.setHomepage(manifest.homepage());
         plugin.setAuthor(manifest.author());
         pluginMapper.updateById(plugin);
@@ -541,8 +587,11 @@ public class PluginSyncService {
      * 非空表示执行时必须绑定连接。扫描失败即同步失败，保留上一次成功注册表。
      */
     private void appendCatalogNodes(
-            SyncBatch batch, long versionId, Path pluginDir, List<AdapterDeclaration> adapters) {
-        PluginCatalogScanner.Catalog catalog = catalogScanner.scan(pluginDir);
+            SyncBatch batch,
+            long versionId,
+            Path pluginDir,
+            List<AdapterDeclaration> adapters,
+            PluginCatalogScanner.Catalog catalog) {
         List<String> scannedAdapters = catalog.adapterTypes();
         List<String> declaredAdapters =
                 adapters.stream().map(AdapterDeclaration::connectionType).toList();
@@ -672,44 +721,29 @@ public class PluginSyncService {
         }
     }
 
-    private PluginIndex readIndex(Path root) {
-        Path index = root.resolve("index.json");
-        try {
-            return objectMapper.readValue(index.toFile(), PluginIndex.class);
-        } catch (RuntimeException e) {
-            throw new IllegalStateException("读取 index.json 失败: " + index, e);
-        }
-    }
-
-    private PluginRepository ensureRepository() {
-        PluginRepository repository =
+    /** 取（必要时创建）这个插件库的同步状态行。声明在 repo.json 里，这里只存状态。 */
+    private PluginRepository ensureState(String repoKey) {
+        PluginRepository state =
                 repositoryMapper.selectOne(
                         new LambdaQueryWrapper<PluginRepository>()
-                                .eq(PluginRepository::getRepoKey, properties.repositoryKey()));
-        if (repository == null) {
-            repository = new PluginRepository();
-            repository.setRepoKey(properties.repositoryKey());
-            repository.setRepoUrl(properties.repositoryUrl());
-            repository.setBranch(properties.branch());
-            repository.setLocalPath(
-                    Path.of(properties.localPath()).toAbsolutePath().normalize().toString());
-            repositoryMapper.insert(repository);
-        } else {
-            String localPath =
-                    Path.of(properties.localPath()).toAbsolutePath().normalize().toString();
-            boolean changed =
-                    !java.util.Objects.equals(repository.getRepoUrl(), properties.repositoryUrl())
-                            || !java.util.Objects.equals(
-                                    repository.getBranch(), properties.branch())
-                            || !java.util.Objects.equals(repository.getLocalPath(), localPath);
-            if (changed) {
-                repository.setRepoUrl(properties.repositoryUrl());
-                repository.setBranch(properties.branch());
-                repository.setLocalPath(localPath);
-                repositoryMapper.updateById(repository);
-            }
+                                .eq(PluginRepository::getRepoKey, repoKey));
+        if (state == null) {
+            state = new PluginRepository();
+            state.setRepoKey(repoKey);
+            state.setLocalPath("");
+            repositoryMapper.insert(state);
         }
-        return repository;
+        return state;
+    }
+
+    /** 把失败原因记在库的状态行上，界面上能看到是哪个库出的问题。 */
+    private void markError(PluginRepository state, String message) {
+        state.setLastError(trim(message, 1024));
+        repositoryMapper.updateById(state);
+    }
+
+    private void markError(String repoKey, String message) {
+        markError(ensureState(repoKey), message);
     }
 
     /** commit 未变化不代表注册表仍然完整：上一次扫描可能在写库前失败，或者数据库被重建过。 只要一张连接类型都读不到，就必须重新扫描，不能因为 commit 相同而永久跳过。 */
@@ -734,7 +768,7 @@ public class PluginSyncService {
     private String manifestJson(
             Plugin plugin,
             PluginManifestReader.PluginManifest manifest,
-            PluginVersionEntry versionEntry,
+            PluginCatalogScanner.ScannedVersion scannedVersion,
             List<AdapterDeclaration> adapters,
             String artifactSha256) {
         Map<String, Object> root = new LinkedHashMap<>();
@@ -743,7 +777,7 @@ public class PluginSyncService {
                 Map.of(
                         "key", plugin.getPluginKey(),
                         "name", plugin.getName(),
-                        "version", versionEntry.version()));
+                        "version", scannedVersion.version()));
         root.put("capabilities", manifest.capabilities());
         root.put("artifactSha256", artifactSha256);
         if (!adapters.isEmpty()) {
@@ -838,11 +872,4 @@ public class PluginSyncService {
     }
 
     private record VersionKey(long pluginId, String version) {}
-
-    private record PluginIndex(int schemaVersion, List<PluginIndexEntry> plugins) {}
-
-    private record PluginIndexEntry(
-            String key, String namespace, List<PluginVersionEntry> versions) {}
-
-    private record PluginVersionEntry(String version, String path, String publishedTime) {}
 }
