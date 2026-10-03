@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-TAG = "__loom__"
+TAG = "__loombot__"
 
 
 def dumps(value: Any) -> str:

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Loom 插件库 PR 机器人（纯标准库）。
+"""LoomBot 插件库 PR 机器人（纯标准库）。
 
 轮询 Gitee 开放 PR → 拉分支 → 四道闸门 → 通过就合并 + 补全 + 发布，不通过就评论打回。
 
-设计要点（和 Loom 的库格式对齐）：
+设计要点（和 LoomBot 的库格式对齐）：
 
 - **最低规范只有一条：函数放在对的目录里。** 没装饰器、没类型、没 plugin.toml 都能过，
   由 `complete.py` 补全；只有「位置放错 / 适配器签名不对」才打回。
@@ -11,7 +11,7 @@
   而是合并到 main 之后再补全，补全结果连同冻结一起提交，并在 PR 里评论补了什么。
 - **作者信息全自动**：author 取 Gitee 提交人账号，key 取插件目录名，版本没写就自动（首次 0.1.0，
   已有版本则 patch +1）。
-- **自己管一份工作副本**：在 `<work_dir>/repo` 里克隆插件库，不碰 Loom 自己那份
+- **自己管一份工作副本**：在 `<work_dir>/repo` 里克隆插件库，不碰 LoomBot 自己那份
   （`python/plugins/<库>/repo`）——否则两边都在同一个 checkout 上 pull/commit 会打架。
 
 用法（在主项目的 `python/` 目录下）：
@@ -23,7 +23,7 @@
 配置分两处：
 
 - **非密钥**（仓库坐标、分支、gate 开关、AI 地址与模型）来自 `--config <json>`，或环境变量
-  `LOOM_PLUGIN_MARKET_CONFIG`——Java 的定时任务把 `sys_config` 里的值序列化后传进来。
+  `LOOMBOT_PLUGIN_MARKET_CONFIG`——Java 的定时任务把 `sys_config` 里的值序列化后传进来。
 - **密钥**（Gitee token、AI key）**只从本地文件读**，默认 `python/secrets/plugin-market.json`，
   不进数据库、不进接口、不进日志。
 """
@@ -62,7 +62,7 @@ from system.plugin_market.gates import (
 from system.plugin_market.gitee import GiteeClient, GiteeError
 from system.plugin_market.gitee import authenticated_url, parse_repo_url
 
-# demo/python —— 跑 `-m system.plugin_market.loom_publish` 时的 cwd
+# demo/python —— 跑 `-m system.plugin_market.loombot_publish` 时的 cwd
 PY_ROOT = Path(__file__).resolve().parents[2]
 # 本次运行的插件库工作副本，在 main() 里按配置定下来
 WORK: Path | None = None
@@ -263,7 +263,7 @@ def normalize_layout(plugin_dir: Path, sources_root: Path, account: str) -> Path
 def fix_manifest_identity(plugin_dir: Path, account: str, key: str) -> bool:
     """把 plugin.toml 里的 key / author 改成权威值（目录名与账号）。
 
-    身份字段不是语义，是 Loom 用来拼 plugin_key 的：作者写成昵称（`张三`）而账号是 `zhangsan`
+    身份字段不是语义，是 LoomBot 用来拼 plugin_key 的：作者写成昵称（`张三`）而账号是 `zhangsan`
     时，check 会直接报"作者目录名不一致"。机器人顺手改掉，作者不用管这层。
     只替换这两行，其余内容和注释原样保留。
     """
@@ -504,7 +504,7 @@ def _deletion_plan_comment(result) -> str:
     lines.append("")
     lines.append(
         "接下来机器人会合并这个 PR，并把 `index.json` 和 `plugins/` 目录对齐"
-        "（你只删了其中一边也没关系）。Loom 侧会在下一个同步周期（默认 30 秒）拉到，"
+        "（你只删了其中一边也没关系）。LoomBot 侧会在下一个同步周期（默认 30 秒）拉到，"
         "引用被删版本的工作流会被标失效并摘掉触发。"
     )
     return "\n".join(lines)
@@ -571,7 +571,7 @@ def _publish(config: dict, log: BotLogger, number: int, pull: dict) -> str:
         [
             sys.executable,
             "-m",
-            "system.plugin_market.loom_publish",
+            "system.plugin_market.loombot_publish",
             "build",
             str(plugin_dir),
             "--apply",
@@ -596,7 +596,7 @@ def _publish(config: dict, log: BotLogger, number: int, pull: dict) -> str:
         "## 已合并并发布\n\n"
         f"作者：`{account}`　插件：`{key}`\n\n"
         f"机器人补全的文件：\n{detail}\n\n"
-        "Loom 侧会在下一个同步周期（默认 30 秒）拉到这个新版本。"
+        "LoomBot 侧会在下一个同步周期（默认 30 秒）拉到这个新版本。"
     )
 
 
@@ -620,7 +620,7 @@ def _reconcile(config: dict, log: BotLogger, number: int) -> bool:
         [
             sys.executable,
             "-m",
-            "system.plugin_market.loom_publish",
+            "system.plugin_market.loombot_publish",
             "reconcile",
             "--library",
             str(WORK),
@@ -790,7 +790,7 @@ def test_review(src: Path, use_ai: bool, config: dict | None) -> int:
         [
             sys.executable,
             "-m",
-            "system.plugin_market.loom_publish",
+            "system.plugin_market.loombot_publish",
             "check",
             str(target),
         ],
@@ -817,8 +817,8 @@ def ensure_working_copy(
 ) -> Path:
     """保证机器人有一份自己的插件库工作副本（`<work_dir>/repo`）。
 
-    不碰 Loom 自己那份（`python/plugins/<库>/repo`）：两边都在同一个 checkout 上
-    pull / commit 会互相打架，而且 Loom 的同步器走 `pull --ff-only`，会被机器人
+    不碰 LoomBot 自己那份（`python/plugins/<库>/repo`）：两边都在同一个 checkout 上
+    pull / commit 会互相打架，而且 LoomBot 的同步器走 `pull --ff-only`，会被机器人
     还没推出去的提交顶住。
 
     克隆用带 token 的地址，克隆完立刻把 `origin` 改回干净地址——token 不留在 `.git/config`。
@@ -864,7 +864,7 @@ def ensure_working_copy(
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    parser = argparse.ArgumentParser(description="Loom 插件库 PR 机器人")
+    parser = argparse.ArgumentParser(description="LoomBot 插件库 PR 机器人")
     parser.add_argument(
         "--config",
         metavar="<json>",

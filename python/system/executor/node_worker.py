@@ -224,7 +224,7 @@ def _code_of(exc: BaseException) -> str:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Loom 插件节点宿主进程")
+    parser = argparse.ArgumentParser(description="LoomBot 插件节点宿主进程")
     parser.add_argument("--plugin-dir", required=True)
     parser.add_argument("--scanner", required=True)
     parser.add_argument("--repo", required=True)

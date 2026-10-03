@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """把贡献者要用的脚本同步到插件库仓库。
 
-插件库仓库里保留 `scripts/loom_publish.py` 和 `scripts/audit.py`，是为了让贡献者
-clone 下来就能本地自检（`check` / 安全扫描），不用装 Loom。
+插件库仓库里保留 `scripts/loombot_publish.py` 和 `scripts/audit.py`，是为了让贡献者
+clone 下来就能本地自检（`check` / 安全扫描），不用装 LoomBot。
 
 但**权威实现只有一份，在主项目这里**——库仓库里那两份是生成物，文件头会写明来源。
 改逻辑改这边，然后跑一次同步；两边各改各的必然漂移。
@@ -20,14 +20,14 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 # 生成物：库仓库里要有的、给贡献者用的脚本
-GENERATED = ("loom_publish.py", "audit.py")
+GENERATED = ("loombot_publish.py", "audit.py")
 
 
 def render(source: Path) -> str:
     """给源码加上「生成物」头，别让人在库仓库里直接改。"""
     text = source.read_text(encoding="utf-8")
     banner = (
-        "# 本文件由 Loom 主项目生成，请勿直接修改。\n"
+        "# 本文件由 LoomBot 主项目生成，请勿直接修改。\n"
         f"# 来源：system/plugin_market/{source.name}\n"
         "# 同步：python -m system.plugin_market.sync_library_scripts <插件库工作副本>\n"
     )

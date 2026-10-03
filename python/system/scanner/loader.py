@@ -9,13 +9,13 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-import loom_adapter
-import loom_node
+import loombot_adapter
+import loombot_node
 from system.scanner.errors import ScanError
 
 
 def repo_root() -> Path:
-    """Python 侧的根目录（`python/`），也是 `loom_adapter` / `loom_node` 所在目录。
+    """Python 侧的根目录（`python/`），也是 `loombot_adapter` / `loombot_node` 所在目录。
 
     本文件在 `python/system/scanner/`，所以要往上三层；少一层会把 `python/system` 塞进 sys.path，
     那层没有 SDK，还平白多出一个可能遮蔽标准库的搜索路径。
@@ -58,7 +58,7 @@ def load_module(path: Path, plugin_dir: Path) -> tuple[ModuleType, str]:
     relative = path.resolve().relative_to(plugin_dir.resolve())
     relative_text = relative.as_posix()
     digest = hashlib.sha256(relative_text.encode("utf-8")).hexdigest()[:10]
-    module_name = f"loom_plugin_{plugin_dir.name}_{digest}_{path.stem}"
+    module_name = f"loombot_plugin_{plugin_dir.name}_{digest}_{path.stem}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ScanError(f"无法加载插件模块: {relative_text}")
@@ -81,9 +81,9 @@ def _source_name(module: ModuleType, func: Any, key: str) -> str:
 
 def collect_adapter_nodes(path: Path, plugin_dir: Path, adapter_type: str, sort_offset: int) -> list[Any]:
     """收集一个适配器模块里声明的事件或动作。"""
-    before = loom_adapter.registry_size()
+    before = loombot_adapter.registry_size()
     module, relative_text = load_module(path, plugin_dir)
-    specs = loom_adapter.registered_since(before)
+    specs = loombot_adapter.registered_since(before)
     for index, spec in enumerate(specs):
         spec.connection_type = adapter_type
         spec.source_ref = f"{relative_text}#{_source_name(module, spec.func, spec.key)}"
@@ -93,9 +93,9 @@ def collect_adapter_nodes(path: Path, plugin_dir: Path, adapter_type: str, sort_
 
 def collect_workflow_nodes(path: Path, plugin_dir: Path, sort_offset: int) -> list[Any]:
     """收集一个节点模块里声明的工作流节点。"""
-    before = loom_node.node_registry_size()
+    before = loombot_node.node_registry_size()
     module, relative_text = load_module(path, plugin_dir)
-    specs = loom_node.nodes_registered_since(before)
+    specs = loombot_node.nodes_registered_since(before)
     for index, spec in enumerate(specs):
         spec.source_ref = f"{relative_text}#{_source_name(module, spec.func, spec.key)}"
         spec.sort = sort_offset + index
@@ -104,9 +104,9 @@ def collect_workflow_nodes(path: Path, plugin_dir: Path, sort_offset: int) -> li
 
 def collect_entities(path: Path, plugin_dir: Path) -> list[Any]:
     """收集一个实体模块里声明的实体类。"""
-    before = loom_node.entity_registry_size()
+    before = loombot_node.entity_registry_size()
     module, relative_text = load_module(path, plugin_dir)
-    classes = loom_node.entities_registered_since(before)
+    classes = loombot_node.entities_registered_since(before)
     for cls in classes:
-        setattr(cls, "__loom_entity_ref__", relative_text)
+        setattr(cls, "__loombot_entity_ref__", relative_text)
     return classes

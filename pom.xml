@@ -10,8 +10,8 @@
         <version>4.1.1</version>
     </parent>
 
-    <groupId>com.loom</groupId>
-    <artifactId>loom</artifactId>
+    <groupId>com.loombot</groupId>
+    <artifactId>loombot</artifactId>
     <version>1.0-SNAPSHOT</version>
 
     <properties>
@@ -167,7 +167,7 @@
     </dependencies>
 
     <build>
-        <finalName>loom</finalName>
+        <finalName>loombot</finalName>
         <plugins>
             <!-- 编译器：显式声明注解处理器路径。
                  不写这段的话，JDK 21 会从 classpath 自动发现处理器并打印告警，

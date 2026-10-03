@@ -7,7 +7,7 @@
 3. **安全扫描**：`audit.py` 出现 HIGH → 打回（静态规则，不交给 AI 放宽）。
 4. **AI 审核**：`BLOCK` → 打回；`WARN` / `OK` → 放行（只把建议写进评论）。
 
-另有一条**删除 PR** 的旁路（见 `gate_deletion`）：作者删掉自己已发布的版本（`loom_publish.py remove`
+另有一条**删除 PR** 的旁路（见 `gate_deletion`）：作者删掉自己已发布的版本（`loombot_publish.py remove`
 生成的改动），机器人核对归属后合并，不发布新代码，也不走补全和安全扫描。
 """
 

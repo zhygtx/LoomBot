@@ -27,7 +27,7 @@ from system.executor.errors import NodeError
 
 log = logging.getLogger("workflow-plugins")
 
-DEFAULT_SCANNER = "loom"
+DEFAULT_SCANNER = "loombot"
 REPO_MANIFEST = "repo.json"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -339,7 +339,7 @@ class PluginRegistry:
                 read_scanner_name(repo_folder) if repo_folder is not None else DEFAULT_SCANNER
             )
             if repo_folder is None:
-                # 不在任何插件库文件夹里：按 Loom 自己的格式兜底，至少不会直接报"找不到库"。
+                # 不在任何插件库文件夹里：按 LoomBot 自己的格式兜底，至少不会直接报"找不到库"。
                 log.warning(
                     "插件目录不在插件库文件夹内，按 %s 格式加载: %s", scanner_name, plugin_dir
                 )
@@ -389,7 +389,7 @@ def find_repo_folder(plugin_dir: Path) -> Path | None:
 
 
 def read_scanner_name(repo_folder: Path) -> str:
-    """读库声明里的子扫描器名；读不出来就按 Loom 自己的格式处理。"""
+    """读库声明里的子扫描器名；读不出来就按 LoomBot 自己的格式处理。"""
     manifest = repo_folder / REPO_MANIFEST
     try:
         data = json.loads(manifest.read_text(encoding="utf-8"))

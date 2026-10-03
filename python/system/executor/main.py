@@ -103,7 +103,7 @@ class WorkerHost:
                 task.add_done_callback(self.tasks.discard)
 
     def _build_test_app(self) -> FastAPI:
-        app = FastAPI(title="Loom Workflow Test Runtime", docs_url=None, redoc_url=None)
+        app = FastAPI(title="LoomBot Workflow Test Runtime", docs_url=None, redoc_url=None)
 
         @app.get("/internal/health")
         async def health() -> dict[str, str]:

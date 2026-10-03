@@ -16,9 +16,9 @@ from .complete import SAFE_TYPE, TYPE_WHITELIST, NodeInference, NodeInfo, safe_t
 
 # 用 __TYPES__ 占位而不是 str.format：提示词里全是 JSON 示例，`{}` 到处都是，
 # 用 format 就得把每个花括号都转义一遍，改一次踩一次。
-_INFER_SYSTEM_TEMPLATE = """你在帮 Loom 插件库补全节点函数的「框架内容」。只输出 JSON，不要解释。
+_INFER_SYSTEM_TEMPLATE = """你在帮 LoomBot 插件库补全节点函数的「框架内容」。只输出 JSON，不要解释。
 
-Loom 的约定：
+LoomBot 的约定：
 - 工作流节点（NODE）必须是普通函数，第一个位置参数是 ctx，其余参数成为节点参数。
 - 适配器事件（EVENT）签名是 async def handler(conn, frame)，动作（ACTION）是 async def handler(conn, params)。
 - 参数说明走 Annotated[T, Param(description="...")]；返回值类型决定画布能引用哪些字段。
@@ -33,9 +33,9 @@ Loom 的约定：
    只有**真的看不出**时才用 object——object 表示「不做类型转换、原样传递」，安全但等于没有类型提示，
    画布上会少一个类型化编辑器。宁可多推断一步，也不要一律写 object。
 4. **nullable 只在签名里明确写了 `= None` 时才写 true，其余一律 false。**
-   注意 Loom **不会**拿函数签名里的 Python 默认值兜底：`limit=100` 这种参数用户仍然必须填，
+   注意 LoomBot **不会**拿函数签名里的 Python 默认值兜底：`limit=100` 这种参数用户仍然必须填，
    标成 nullable 会让用户能留空、运行时真的传 None 进去，反而把它弄崩。
-5. `connection_id` 固定是 int——Loom 的 `ctx.call_action` 收的就是 int。
+5. `connection_id` 固定是 int——LoomBot 的 `ctx.call_action` 收的就是 int。
 6. 不要给 ctx / conn / frame / params 这几个框架参数生成说明。
 7. 只根据函数体推断，不要发明函数里没有的东西。
 8. **ACTION（动作）**：从函数体里看它读了 `params` 的哪些键（`params.get("x")` / `params["x"]`），
@@ -57,7 +57,7 @@ INFER_SYSTEM = _INFER_SYSTEM_TEMPLATE.replace(
     "__TYPES__", ",".join(sorted(TYPE_WHITELIST))
 )
 
-REVIEW_SYSTEM = """你是 Loom 插件库的代码审核员。只输出 JSON，不要解释。
+REVIEW_SYSTEM = """你是 LoomBot 插件库的代码审核员。只输出 JSON，不要解释。
 
 **按「常规简单场景」评估**：插件只要在正常用法下能工作就算通过。
 不要因为边界情况、极端输入、代码风格、缺少优化、缺少注释而打回——那些写进 suggestions 就够了。

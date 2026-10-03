@@ -3,7 +3,7 @@
 分两处，界线是**密钥**：
 
 - **非密钥**（仓库坐标、分支、gate 开关、AI 地址与模型）：`--config <json>`，或环境变量
-  `LOOM_PLUGIN_MARKET_CONFIG`（Java 的定时任务把 `sys_config` 里的值序列化后传进来）。
+  `LOOMBOT_PLUGIN_MARKET_CONFIG`（Java 的定时任务把 `sys_config` 里的值序列化后传进来）。
   这些值后台可改，改完下一轮生效。
 - **密钥**（Gitee token、AI key）：**只从本地文件读**，默认 `python/secrets/plugin-market.json`。
   不放数据库、不走接口——`sys_config` 的读接口是原样返回值的，放进去等于把一把有 `projects`
@@ -19,8 +19,8 @@ from typing import Any
 
 PY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SECRETS_FILE = PY_ROOT / "secrets" / "plugin-market.json"
-ENV_SETTINGS = "LOOM_PLUGIN_MARKET_CONFIG"
-ENV_SECRETS = "LOOM_PLUGIN_MARKET_SECRETS"
+ENV_SETTINGS = "LOOMBOT_PLUGIN_MARKET_CONFIG"
+ENV_SECRETS = "LOOMBOT_PLUGIN_MARKET_SECRETS"
 
 # 默认值刻意保守：默认关闭、默认只审不合不发
 DEFAULTS: dict[str, Any] = {

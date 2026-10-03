@@ -46,11 +46,11 @@ class WorkerConfig:
                 os.getenv("WORKFLOW_TIMEOUT_SECONDS", "60")
             ),
             java_base_url=os.getenv("WORKFLOW_JAVA_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
-            workflow_token=os.getenv("WORKFLOW_CONTROL_TOKEN", "loom-dev-workflow-token"),
+            workflow_token=os.getenv("WORKFLOW_CONTROL_TOKEN", "loombot-dev-workflow-token"),
             adapter_base_url=os.getenv(
                 "ADAPTER_CONTROL_BASE_URL", "http://127.0.0.1:9100"
             ).rstrip("/"),
-            adapter_token=os.getenv("ADAPTER_CONTROL_TOKEN", "loom-dev-adapter-token"),
+            adapter_token=os.getenv("ADAPTER_CONTROL_TOKEN", "loombot-dev-adapter-token"),
             test_host=os.getenv("WORKFLOW_TEST_HOST", "127.0.0.1"),
             test_port=_int("WORKFLOW_TEST_PORT", 9200),
             # 大内容（二进制/文件）落盘目录；Java 读同一个目录提供下载，所以由 Java 通过环境变量下发

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import UUID
 
-from loom_node import Attribute, Param
+from loombot_node import Attribute, Param
 
 _PRIMITIVES: dict[Any, str] = {
     str: "str",
@@ -74,7 +74,7 @@ def json_safe(value: Any) -> Any:
 def _metadata_of(item: Any) -> Any | None:
     """判断 `Annotated[T, ...]` 里的一项是不是参数/字段说明。
 
-    只认字段而不认类型：异构插件库可能自带一套 SDK，它的 `Param` 不是 Loom 的这个类，
+    只认字段而不认类型：异构插件库可能自带一套 SDK，它的 `Param` 不是 LoomBot 的这个类，
     但字段（description / nullable / name）是一样的，运行期必须照样认出来，
     否则 `Param(nullable=True)` 会被当成必填。
     """
@@ -207,7 +207,7 @@ def describe_parameters(func: Callable[..., Any]) -> tuple[list[dict[str, Any]],
 def takes_ctx(func: Callable[..., Any]) -> bool:
     """节点函数第一个位置参数叫 `ctx` 才注入执行上下文。
 
-    和 `describe_parameters` 跳过 `ctx` 是同一条规则：Loom 的节点是 `func(ctx, ...)`，
+    和 `describe_parameters` 跳过 `ctx` 是同一条规则：LoomBot 的节点是 `func(ctx, ...)`，
     GeneralBot 的方法是 `self.method(...)`，用参数名区分，不额外引入标记。
     """
     try:
@@ -275,7 +275,7 @@ def _append_entity_fields(
 
 def describe_entity(cls: type, name: str) -> dict[str, Any]:
     """解析实体类的字段。"""
-    meta = getattr(cls, "__loom_entity__", {}) or {}
+    meta = getattr(cls, "__loombot_entity__", {}) or {}
     hints = type_hints(cls)
     field_names: list[str] = []
     if dataclasses.is_dataclass(cls):
@@ -296,7 +296,7 @@ def describe_entity(cls: type, name: str) -> dict[str, Any]:
         )
     return {
         "name": name,
-        "sourceRef": f"{getattr(cls, '__loom_entity_ref__', '')}#{name}",
+        "sourceRef": f"{getattr(cls, '__loombot_entity_ref__', '')}#{name}",
         "description": str(meta.get("description") or ""),
         "fields": fields,
     }

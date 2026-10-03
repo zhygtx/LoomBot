@@ -8,12 +8,12 @@
 cd python
 python -m pip install -r system/adapter/requirements.txt
 $env:ADAPTER_PLUGIN_ROOT = "plugins"
-$env:ADAPTER_CONTROL_TOKEN = "loom-dev-adapter-token"
+$env:ADAPTER_CONTROL_TOKEN = "loombot-dev-adapter-token"
 $env:ADAPTER_REDIS_URL = "redis://localhost:6379/0"
 python -m system.adapter.main
 ```
 
-工作目录必须是 `python/`：`system.*` 包和插件 SDK（`loom_node` / `loom_adapter`）都相对它导入，
+工作目录必须是 `python/`：`system.*` 包和插件 SDK（`loombot_node` / `loombot_adapter`）都相对它导入，
 `ADAPTER_PLUGIN_ROOT` 也相对它解析。
 
 控制接口默认监听 `127.0.0.1:9100`，反向 WebSocket 网关默认监听 `127.0.0.1:9000`。所有控制请求都要带 `X-Adapter-Token`。

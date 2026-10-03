@@ -1,4 +1,4 @@
-"""Loom 的 Python 侧运行时。
+"""LoomBot 的 Python 侧运行时。
 
 - `scanner/`：扫描插件包，产出节点目录
 - `executor/`：工作流 DAG 执行器

@@ -115,8 +115,8 @@ async def lifespan(_: FastAPI):
         await redis_bus.close()
 
 
-app = FastAPI(title="Loom Adapter Supervisor", docs_url=None, redoc_url=None, lifespan=lifespan)
-gateway_app = FastAPI(title="Loom Adapter Gateway", docs_url=None, redoc_url=None)
+app = FastAPI(title="LoomBot Adapter Supervisor", docs_url=None, redoc_url=None, lifespan=lifespan)
+gateway_app = FastAPI(title="LoomBot Adapter Gateway", docs_url=None, redoc_url=None)
 
 
 def require_token(token: str | None) -> None:

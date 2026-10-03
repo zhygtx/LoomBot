@@ -1,1 +1,1 @@
-"""Loom Python Adapter Host."""
+"""LoomBot Python Adapter Host."""

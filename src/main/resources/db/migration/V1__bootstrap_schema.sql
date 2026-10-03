@@ -1,10 +1,10 @@
 -- ============================================================================
--- Loom · 单文件初始化脚本
+-- LoomBot · 单文件初始化脚本
 -- ============================================================================
 --
 -- 项目还没定型，表结构会频繁改。所以这里只有**一个**迁移文件：建表 + 内置测试数据。
 -- 改结构的流程是「改这个文件 → 重启」—— 应用启动时会把库清空重建（见 application.yml 的
--- loom.datasource.recreate 开关），不需要再写 V5、V6… 一大堆增量脚本。
+-- loombot.datasource.recreate 开关），不需要再写 V5、V6… 一大堆增量脚本。
 --
 -- 代价说清楚：每次启动数据都没了（新建的菜单、改过的配置）。这是刻意的选择，
 -- 换来的是「改表不用写迁移」。等结构定型后关掉重建开关即可，那时再回到增量迁移的写法。
@@ -529,7 +529,7 @@ CREATE TABLE notify_log (
 -- 内置站长账号
 -- ---------------------------------------------------------------------------
 --
--- 邮箱 admin@loom.local / 密码 LoomAdmin123
+-- 邮箱 admin@loombot.local / 密码 LoomBotAdmin123
 --
 -- 哈希是 BCrypt 的，用 spring-security-crypto 的 BCrypt.hashpw 生成（不是
 -- BCryptPasswordEncoder —— 两者的前缀与强度参数写法不同，混用会登录不上）。
@@ -537,7 +537,7 @@ CREATE TABLE notify_log (
 
 INSERT INTO sys_user (id, password, email, status, remark) VALUES
     (1, '$2a$10$eMr62ErnaBXBe4jCO0WCOu/08/y6bvRv0WNpFf40gR.7z.9ANb.9a',
-     'admin@loom.local', 1, '内置开发站长账号，密码 LoomAdmin123');
+     'admin@loombot.local', 1, '内置开发站长账号，密码 LoomBotAdmin123');
 
 -- ---------------------------------------------------------------------------
 -- 角色与权限

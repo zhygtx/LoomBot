@@ -50,7 +50,7 @@
         <includeCallerData>false</includeCallerData>
     </appender>
 
-    <logger name="com.loom" level="DEBUG" />
+    <logger name="com.loombot" level="DEBUG" />
 
     <!--
       定时任务和它们触发的 SQL 不要刷屏：
@@ -59,14 +59,14 @@
       - Mapper 的 DEBUG 会打印每条 SQL 和参数
       这些调到 WARN，保留错误和警告；需要排查 SQL 时再临时调回 DEBUG。
     -->
-    <logger name="com.loom.connection.mapper" level="WARN" />
-    <logger name="com.loom.plugin.mapper" level="WARN" />
-    <logger name="com.loom.auth.mapper" level="WARN" />
-    <logger name="com.loom.system.mapper" level="WARN" />
-    <logger name="com.loom.workflow.mapper" level="WARN" />
-    <logger name="com.loom.connection.sync.ConnectionRuntimeSyncService" level="WARN" />
-    <logger name="com.loom.plugin.service.PluginSyncService" level="WARN" />
-    <logger name="com.loom.plugin.sync" level="WARN" />
+    <logger name="com.loombot.connection.mapper" level="WARN" />
+    <logger name="com.loombot.plugin.mapper" level="WARN" />
+    <logger name="com.loombot.auth.mapper" level="WARN" />
+    <logger name="com.loombot.system.mapper" level="WARN" />
+    <logger name="com.loombot.workflow.mapper" level="WARN" />
+    <logger name="com.loombot.connection.sync.ConnectionRuntimeSyncService" level="WARN" />
+    <logger name="com.loombot.plugin.service.PluginSyncService" level="WARN" />
+    <logger name="com.loombot.plugin.sync" level="WARN" />
 
     <!-- 根日志级别配置 -->
     <root level="INFO">

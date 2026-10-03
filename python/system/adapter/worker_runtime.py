@@ -220,7 +220,7 @@ class AdapterRegistry:
         if not path.is_relative_to(self.plugin_dir) or not path.is_file():
             raise ValueError(f"插件入口不在插件目录内: {self.entry_point}")
         spec = importlib.util.spec_from_file_location(
-            f"loom_entry_{self.plugin_dir.name}", path
+            f"loombot_entry_{self.plugin_dir.name}", path
         )
         if spec is None or spec.loader is None:
             raise ImportError(f"无法加载插件入口: {path}")

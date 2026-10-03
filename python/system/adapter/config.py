@@ -25,11 +25,11 @@ class HostConfig:
         return cls(
             host=os.getenv("ADAPTER_HOST", "127.0.0.1"), port=int(os.getenv("ADAPTER_PORT", "9100")),
             ws_host=os.getenv("ADAPTER_WS_HOST", "127.0.0.1"), ws_port=int(os.getenv("ADAPTER_WS_PORT", "9000")),
-            control_token=os.getenv("ADAPTER_CONTROL_TOKEN", "loom-dev-adapter-token"),
+            control_token=os.getenv("ADAPTER_CONTROL_TOKEN", "loombot-dev-adapter-token"),
             plugin_root=Path(os.getenv("ADAPTER_PLUGIN_ROOT", "plugins")).resolve(),
             redis_url=os.getenv("ADAPTER_REDIS_URL", "redis://localhost:6379/0"),
             task_stream=os.getenv("WORKFLOW_TASK_STREAM", "workflow:task:v1"),
-            index_prefix=os.getenv("WORKFLOW_INDEX_PREFIX", "loom:workflow:index"),
+            index_prefix=os.getenv("WORKFLOW_INDEX_PREFIX", "loombot:workflow:index"),
             task_ttl_seconds=int(os.getenv("WORKFLOW_TASK_TTL_SECONDS", "300")),
             python_command=os.getenv("ADAPTER_PYTHON_COMMAND", "python"),
             event_audit=os.getenv("ADAPTER_EVENT_AUDIT", "false").strip().lower()

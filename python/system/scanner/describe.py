@@ -2,7 +2,7 @@
 
 用法：
 
-    python -m system.scanner.describe <插件库文件夹> [--scanner loom|local]
+    python -m system.scanner.describe <插件库文件夹> [--scanner loombot|local]
 
 `<插件库文件夹>` 形如 `python/plugins/<库 key>/`，里面：
 
@@ -14,7 +14,7 @@
 ```
 
 **主扫描器不解析任何库格式。** 它只做三件事：按名字找到子扫描器、把结果收进统一结构、
-保证输出形状永远是 Loom 认的。自定义解析全在子扫描器里（契约见 `system/scanner/contract.py`）。
+保证输出形状永远是 LoomBot 认的。自定义解析全在子扫描器里（契约见 `system/scanner/contract.py`）。
 
 输出（stdout，UTF-8）：
 
@@ -22,7 +22,7 @@
 {
   "protocolVersion": 1,
   "plugins": [
-    { "key": "text-tools", "namespace": "loom",
+    { "key": "text-tools", "namespace": "loombot",
       "versions": [
         { "version": "1.0.0", "path": "text-tools", "publishedTime": "...",
           "catalog": { "...节点目录..." } }
@@ -48,7 +48,7 @@ from system.scanner.errors import ScanError
 
 PROTOCOL_VERSION = 1
 
-#: 插件库文件夹里放 git 工作副本的子目录名。Loom 只往这里写（clone / pull），
+#: 插件库文件夹里放 git 工作副本的子目录名。LoomBot 只往这里写（clone / pull），
 #: 不碰库文件夹里的其它东西——子扫描器就放在工作副本外面，才不会被 git 覆盖。
 WORKING_COPY_DIR = "repo"
 
@@ -123,8 +123,8 @@ def main() -> None:
     parser.add_argument("repo_root", help="插件库文件夹（含 repo/ 与 repo.json）")
     parser.add_argument(
         "--scanner",
-        default="loom",
-        help="子扫描器：内置的 loom，或 local（用库文件夹里的 scanner.py）",
+        default="loombot",
+        help="子扫描器：内置的 loombot，或 local（用库文件夹里的 scanner.py）",
     )
     args = parser.parse_args()
     try:

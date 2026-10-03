@@ -19,7 +19,7 @@
 **绝不碰**：函数体、函数名、参数名 / 顺序 / 默认值、目录位置，以及作者已经写好的类型。
 这条边界是硬的——改了就会改语义。
 
-`object` 在 Loom 里等于「不做类型转换、原样传递」（见 `system/executor/convert.py`），
+`object` 在 LoomBot 里等于「不做类型转换、原样传递」（见 `system/executor/convert.py`），
 所以推断器拿不准时写 `object` 是安全的：最坏情况只是画布上少个类型化编辑器，不会因为猜错类型
 把数据悄悄转坏。
 """
@@ -35,9 +35,9 @@ from pathlib import Path
 
 DIRECTORY_KINDS = (("nodes", "NODE"), ("events", "EVENT"), ("actions", "ACTION"))
 KIND_DECORATOR = {"NODE": "node", "EVENT": "event", "ACTION": "action"}
-KIND_MODULE = {"NODE": "loom_node", "EVENT": "loom_adapter", "ACTION": "loom_adapter"}
+KIND_MODULE = {"NODE": "loombot_node", "EVENT": "loombot_adapter", "ACTION": "loombot_adapter"}
 
-# Loom 认的类型；推断器只能从这个集合里挑，其余一律 object
+# LoomBot 认的类型；推断器只能从这个集合里挑，其余一律 object
 TYPE_WHITELIST = frozenset(
     {
         "str",
@@ -305,7 +305,7 @@ class NodeInference:
 
 
 def safe_type(value: str | None) -> str:
-    """把推断出来的类型夹到 Loom 认的集合里；不认识的降到 object。"""
+    """把推断出来的类型夹到 LoomBot 认的集合里；不认识的降到 object。"""
     text = (value or "").strip()
     return text if text in TYPE_WHITELIST else SAFE_TYPE
 
@@ -625,9 +625,9 @@ def build_edits(scan: PluginScan, inferences: dict[str, NodeInference]) -> dict[
         node_names = sorted(n for n in names if n in {"Param", "node"} and n not in imported)
         adapter_names = sorted(n for n in names if n in {"event", "action"} and n not in imported)
         if node_names:
-            wanted.append(f"from loom_node import {', '.join(node_names)}")
+            wanted.append(f"from loombot_node import {', '.join(node_names)}")
         if adapter_names:
-            wanted.append(f"from loom_adapter import {', '.join(adapter_names)}")
+            wanted.append(f"from loombot_adapter import {', '.join(adapter_names)}")
         if wanted:
             line, col = _import_offset(lines, tree)
             # 插入点后面本来就有空行的话就别再加一行，免得堆出三个空行
