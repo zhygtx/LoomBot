@@ -20,6 +20,12 @@ export interface WorkflowNode {
   nodeKey: string
   /** 保存时的中文展示名快照；运行时把它写进执行日志。 */
   name?: string | null
+  /**
+   * 配置这个节点时插件节点的契约签名。
+   *
+   * <p>插件重扫之后拿它和当前签名比，就能知道这个节点是不是"过期"了——保存时后端据此重算提醒。
+   */
+  pluginNodeHash?: string | null
   connectionType?: string | null
   connectionId?: string | null
   inputs?: WorkflowNodeInput[]
@@ -70,6 +76,8 @@ export interface WorkflowSummary {
   description?: string | null
   enabled: number
   currentVersionId?: string | null
+  /** 有节点引用的插件已变更或已删除；列表页据此打角标。 */
+  hasAlert?: boolean
 }
 
 export interface WorkflowDetail {
@@ -92,6 +100,19 @@ export interface WorkflowNodeCatalogItem {
   returnFields?: WorkflowReturnField[]
   returnType?: string
   category?: string
+  /** 节点契约签名，配置时写进定义，之后用来判断节点是否过期。 */
+  signatureHash?: string
+}
+
+/** 工作流里引用了「已变更 / 已删除」的插件节点时留的提醒。 */
+export interface WorkflowNodeAlert {
+  nodeId: string
+  nodeKey: string
+  pluginVersionId?: string | null
+  /** CHANGED：节点还在但契约变了；REMOVED：节点已经被删掉。 */
+  reason: 'CHANGED' | 'REMOVED' | string
+  detail?: string | null
+  createTime?: string | null
 }
 
 export interface WorkflowNodeCatalog {
@@ -213,6 +234,10 @@ export interface WorkflowSavePayload {
 export const listWorkflows = () => apiRequest<WorkflowSummary[]>({ url: '/workflow/list' })
 
 export const getWorkflow = (id: string) => apiRequest<WorkflowDetail>({ url: `/workflow/${id}` })
+
+/** 画布用：这条工作流有哪些节点失效了。 */
+export const getWorkflowNodeAlerts = (id: string) =>
+  apiRequest<WorkflowNodeAlert[]>({ url: `/workflow/${id}/alerts` })
 
 export const loadNodeCatalog = () => apiRequest<WorkflowNodeCatalog>({ url: '/workflow/nodes' })
 

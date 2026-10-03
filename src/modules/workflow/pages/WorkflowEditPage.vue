@@ -21,6 +21,7 @@ import {
   getExecution,
   getExecutionDefinition,
   getWorkflow,
+  getWorkflowNodeAlerts,
   loadNodeCatalog,
   saveWorkflow,
   setWorkflowEnabled,
@@ -32,6 +33,7 @@ import {
   type WorkflowNode,
   type WorkflowNodeCatalog,
   type WorkflowNodeCatalogItem,
+  type WorkflowNodeAlert,
   type WorkflowTestResult,
   type WorkflowTraceNode,
 } from '../api/workflow-api'
@@ -48,6 +50,7 @@ import {
   missingParameter,
   nodeLabel,
   parameterLabel,
+  sortParameters,
 } from '../model/graph'
 import {
   formatDuration,
@@ -132,6 +135,8 @@ const editingName = ref(false)
 const historyOpen = ref(false)
 const testResult = ref<WorkflowTestResult | null>(null)
 const nodeHeights = ref<Record<string, number>>({})
+/** 画布上按节点 id 索引的失效提醒：插件变更/删除后后端标出来的。 */
+const nodeAlerts = ref<Record<string, WorkflowNodeAlert>>({})
 
 /** 历史日志模式：选中某次执行后画布切到只读，节点下方挂那次执行的输入输出。 */
 const executionView = ref<WorkflowExecutionSummary | null>(null)
@@ -259,6 +264,7 @@ const loadWorkflow = async (): Promise<void> => {
       await nextTick()
       locateInitialNode(false)
     }
+    await loadNodeAlerts()
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '工作流加载失败')
   }
@@ -813,9 +819,65 @@ const handleDocumentClick = (event: MouseEvent): void => {
 const buildDefinition = (): WorkflowDefinition => ({
   eventNodeId: eventNode.value?.id ?? '',
   canvas: { ...canvas },
-  nodes: nodes.value.map(({ descriptor: _descriptor, ...node }) => node),
+  // 保留 descriptor 和 pluginNodeHash：前者是"配置当时这个节点长什么样"的快照，
+  // 插件更新甚至被删之后画布还能按它渲染；后者让后端在保存时能判断节点是否已经换成当前版本。
+  nodes: nodes.value.map((node) => ({ ...node })),
   edges: edges.value,
 })
+
+const loadNodeAlerts = async (): Promise<void> => {
+  if (!workflowId.value) {
+    nodeAlerts.value = {}
+    return
+  }
+  try {
+    const list = await getWorkflowNodeAlerts(workflowId.value)
+    const map: Record<string, WorkflowNodeAlert> = {}
+    list.forEach((item) => {
+      map[item.nodeId] = item
+    })
+    nodeAlerts.value = map
+  } catch {
+    // 提醒拉不到不该挡住编辑，画布少一个角标而已
+    nodeAlerts.value = {}
+  }
+}
+
+/**
+ * 把节点更新到当前插件版本：描述符和签名换成目录里的最新，已配参数按名字带过去。
+ *
+ * <p>节点已经被删掉（目录里找不到）时不硬修——那种情况只能删掉重选。
+ */
+const upgradeNode = (node: WorkflowNode): void => {
+  const latest = allCatalog.value.find(
+    (item) => item.pluginVersionId === node.pluginVersionId && item.nodeKey === node.nodeKey,
+  )
+  if (!latest) {
+    message.error('这个节点在当前插件目录里已经不存在了，请删掉后从左侧重新拖入')
+    return
+  }
+  const inputs = sortParameters(latest.parameters).map(
+    (parameter) =>
+      node.inputs?.find((input) => input.paramName === parameter.name) ?? {
+        paramName: parameter.name,
+        source: '',
+        defaultValue: null,
+      },
+  )
+  const index = nodes.value.findIndex((item) => item.id === node.id)
+  if (index < 0) return
+  nodes.value[index] = {
+    ...node,
+    descriptor: latest,
+    pluginNodeHash: latest.signatureHash ?? null,
+    name: latest.name ?? node.name ?? null,
+    inputs,
+  }
+  const next = { ...nodeAlerts.value }
+  delete next[node.id]
+  nodeAlerts.value = next
+  message.success('节点已更新到当前插件版本，保存后生效')
+}
 
 const validateBeforeSave = (): boolean => {
   if (!name.value.trim()) {
@@ -854,6 +916,8 @@ const save = async (): Promise<boolean> => {
     })
     workflowId.value = result.workflowId
     message.success(`已保存，当前版本 ${result.versionNo}`)
+    // 保存会重算提醒（节点换成当前版本的就清掉），重新拉一次让画布角标同步
+    await loadNodeAlerts()
     if (route.params.id !== result.workflowId) {
       await router.replace(`/workflow/edit/${result.workflowId}`)
     }
@@ -1152,11 +1216,13 @@ onBeforeUnmount(() => {
           :connecting="connecting?.node.id === node.id"
           :readonly="historyMode"
           :status="historyMode ? executionStatusOf(node.id) : null"
+          :alert="nodeAlerts[node.id] ?? null"
           @select="selectedId = $event.id"
           @move-start="startNodeMove"
           @connect-start="startConnection"
           @contextmenu="openNodeContextMenu"
           @open-config="openNodeConfig"
+          @upgrade="upgradeNode"
         />
         <!-- 历史日志模式：只有执行到的节点才挂输入输出预览；没走到的节点靠灰色边框表示 -->
         <div

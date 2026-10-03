@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Cable } from '@lucide/vue'
+import { Cable, TriangleAlert } from '@lucide/vue'
 
-import type { WorkflowNode } from '../api/workflow-api'
+import type { WorkflowNode, WorkflowNodeAlert } from '../api/workflow-api'
 import {
   isAdapterNode,
   nodeAccent,
@@ -21,12 +21,15 @@ const props = withDefaults(
     readonly?: boolean
     /** 历史模式下的执行状态：成功绿框、失败红框、未执行灰虚线框。 */
     status?: 'success' | 'failed' | 'skipped' | null
+    /** 这个节点引用的插件已变更或已删除，由后端标出来。 */
+    alert?: WorkflowNodeAlert | null
   }>(),
   {
     selected: false,
     connecting: false,
     readonly: false,
     status: null,
+    alert: null,
   },
 )
 
@@ -36,6 +39,8 @@ defineEmits<{
   'connect-start': [event: PointerEvent, node: WorkflowNode, port: 'success' | 'failure']
   contextmenu: [event: MouseEvent, node: WorkflowNode]
   'open-config': [node: WorkflowNode]
+  /** 把节点更新到当前插件版本。 */
+  upgrade: [node: WorkflowNode]
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -64,6 +69,7 @@ defineExpose({ root })
       'is-status-success': status === 'success',
       'is-status-failed': status === 'failed',
       'is-status-skipped': status === 'skipped',
+      'is-alerted': Boolean(alert),
     }"
     :data-node-id="node.id"
     :style="accentStyle"
@@ -116,6 +122,18 @@ defineExpose({ root })
             <code>{{ node.descriptor?.returnType || 'void' }}</code>
           </span>
         </footer>
+
+        <p v-if="alert" class="workflow-node__alert">
+          <TriangleAlert :size="12" />
+          <span>{{ alert.reason === 'REMOVED' ? '插件节点已删除' : '插件节点已变更' }}</span>
+          <button
+            v-if="!readonly && alert.reason !== 'REMOVED'"
+            type="button"
+            @click.stop="$emit('upgrade', node)"
+          >
+            更新
+          </button>
+        </p>
       </div>
 
       <span
@@ -208,6 +226,35 @@ defineExpose({ root })
 .workflow-node.is-readonly.is-selected .workflow-node__body {
   outline: 0.16rem solid var(--sys-color-focus);
   outline-offset: 0.12rem;
+}
+
+/* 引用的插件变了 / 没了：用警示色圈出来，并在卡片下方给一个更新入口 */
+.workflow-node.is-alerted .workflow-node__body {
+  border-color: var(--sys-color-warning-text);
+  box-shadow: 0 0 0 0.1rem color-mix(in srgb, var(--sys-color-warning-text) 30%, transparent);
+}
+
+.workflow-node__alert {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0.4rem 0 0;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--sys-color-warning-text) 12%, transparent);
+  color: var(--sys-color-warning-text);
+  font: var(--sys-typography-caption);
+  padding: 0.2rem 0.4rem;
+}
+
+.workflow-node__alert button {
+  margin-inline-start: auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: var(--sys-typography-caption);
+  padding: 0;
+  text-decoration: underline;
 }
 
 .workflow-node__content {

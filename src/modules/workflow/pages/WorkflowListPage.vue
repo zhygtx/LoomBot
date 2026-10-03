@@ -85,6 +85,9 @@ onMounted(load)
             <span class="workflow-tag" :class="{ 'is-on': item.enabled === 1 }">
               {{ item.enabled === 1 ? '已启用' : '已停用' }}
             </span>
+            <span v-if="item.hasAlert" class="workflow-tag is-alert">
+              插件节点已变更
+            </span>
           </div>
           <p class="workflow-card__desc">{{ item.description || '没有描述' }}</p>
         </div>
@@ -218,5 +221,10 @@ onMounted(load)
 .workflow-tag.is-on {
   background: var(--loom-success-bg, rgba(22, 163, 74, 0.12));
   color: var(--loom-success-color, #16a34a);
+}
+
+.workflow-tag.is-alert {
+  background: color-mix(in srgb, var(--sys-color-warning-text) 14%, transparent);
+  color: var(--sys-color-warning-text);
 }
 </style>

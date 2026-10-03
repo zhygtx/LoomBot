@@ -123,6 +123,8 @@ export function createNodeFromCatalog(
     pluginVersionId: item.pluginVersionId ?? null,
     nodeKey: item.nodeKey,
     name: item.name ?? null,
+    // 记下配置时的契约签名：插件重扫之后拿它比，就知道这个节点是不是过期了
+    pluginNodeHash: item.signatureHash ?? null,
     connectionType: item.connectionType ?? null,
     connectionId: null,
     // 不预填插件声明的默认值：参数必须由使用者在画布上显式配置。
@@ -141,6 +143,16 @@ export function attachDescriptor(
   node: WorkflowNode,
   catalog: WorkflowNodeCatalogItem[],
 ): WorkflowNode {
+  // 定义里带了描述符快照就优先用它：插件更新之后画布仍然显示"当时配置的那个节点"，
+  // 变化交给提醒角标表达，而不是悄悄把参数列表换成新的。
+  if (node.descriptor) {
+    return {
+      ...node,
+      name: node.name ?? node.descriptor.name ?? null,
+      // 快照里存了签名，缺基线时从它补——这条路径以前漏了，导致有快照的老节点永远补不上哈希
+      pluginNodeHash: node.pluginNodeHash ?? node.descriptor.signatureHash ?? null,
+    }
+  }
   const descriptor =
     catalog.find(
       (item) => item.pluginVersionId === node.pluginVersionId && item.nodeKey === node.nodeKey,
@@ -152,6 +164,9 @@ export function attachDescriptor(
     descriptor,
     // 旧定义里没有 name 时补上，保证执行日志里能显示中文节点名
     name: descriptor?.name ?? node.name ?? null,
+    // 旧定义里也没有签名基线：按"它就是照当前目录配的"补上。
+    // 不补的话保存时后端没有基线可比，这个节点永远不会被判定为过期。
+    pluginNodeHash: node.pluginNodeHash ?? descriptor?.signatureHash ?? null,
   }
 }
 
