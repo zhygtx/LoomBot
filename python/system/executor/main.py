@@ -279,6 +279,9 @@ class WorkerHost:
                             "nodeKey": item.get("nodeKey"),
                             "status": item.get("status"),
                             "error": item.get("error"),
+                            # 截断时最该留下的就是分类错误码：没有它，
+                            # 「系统繁忙」和「参数不合法」看起来是一样的
+                            "errorCode": item.get("errorCode"),
                         }
                         for item in (detail.get("nodes") or [])
                     ],
