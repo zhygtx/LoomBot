@@ -1,0 +1,292 @@
+.connections-page {
+  display: grid;
+  gap: var(--sys-space-5);
+}
+
+.connections-page__header,
+.connection-form__title,
+.connection-list__head,
+.connection-result__head,
+.connection-item__main,
+.connection-item__name-row,
+.connection-item__actions {
+  display: flex;
+  align-items: center;
+}
+
+.connections-page__header,
+.connection-list__head,
+.connection-result__head {
+  justify-content: space-between;
+  gap: var(--sys-space-4);
+}
+
+.connections-page__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sys-space-2);
+}
+
+.connections-page__header h1,
+.connection-form h2,
+.connection-list h2,
+.connection-result h2 {
+  margin: 0;
+  color: var(--sys-color-text);
+}
+
+.connections-page__header h1 {
+  font: 700 1.75rem/1.2 var(--ref-font-sans);
+}
+
+.connections-page__header p,
+.connection-form__title p,
+.connection-list__head p,
+.connection-item p,
+.connection-result p {
+  margin: 0;
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-body-compact);
+}
+
+.connections-page__eyebrow {
+  color: var(--sys-color-text-accent) !important;
+  font: var(--sys-typography-label-strong) !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.connections-page__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: var(--sys-space-5);
+  align-items: start;
+}
+
+.connections-page__layout--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.connection-form,
+.connection-list,
+.connection-result {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--sys-space-4);
+}
+
+.connection-form__title {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  gap: var(--sys-space-3);
+}
+
+.connection-form__schema {
+  display: grid;
+  gap: var(--sys-space-4);
+  border-top: 1px solid var(--sys-color-border);
+  padding-top: var(--sys-space-4);
+}
+
+.connection-form__schema-head {
+  display: flex;
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--sys-space-3);
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+}
+
+.connection-form__schema-head strong {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  color: var(--sys-color-text);
+  font: var(--sys-typography-label-strong);
+}
+
+.connection-form__schema-head span {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.connection-form .base-notice__content {
+  display: grid;
+  justify-items: start;
+  gap: var(--sys-space-2);
+}
+
+.connection-field {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--sys-space-2);
+}
+
+.connection-field--switch {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  border-block-end: 1px solid var(--sys-color-border);
+  padding-block-end: var(--sys-space-3);
+}
+
+.connection-field__label {
+  color: var(--sys-color-text);
+  font: var(--sys-typography-label-strong);
+}
+
+.connection-field__label b {
+  color: var(--sys-color-danger);
+}
+
+.connection-field__hint,
+.connection-field__error {
+  overflow-wrap: anywhere;
+  font: var(--sys-typography-caption);
+}
+
+.connection-field__hint {
+  color: var(--sys-color-text-muted);
+}
+
+.connection-field__error {
+  color: var(--sys-color-danger);
+}
+
+.connection-field__select {
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: var(--cmp-field-height);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: var(--cmp-field-border-width) solid var(--sys-color-border-strong);
+  border-radius: var(--cmp-field-radius);
+  padding-inline: var(--cmp-field-padding-inline);
+  background: var(--sys-color-field);
+  color: var(--sys-color-text);
+  font: var(--sys-typography-body-compact);
+}
+
+.connection-field__generate {
+  display: grid;
+  inline-size: 2.75rem;
+  block-size: 100%;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--sys-color-text-muted);
+  cursor: pointer;
+}
+
+.connection-field__generate:hover {
+  color: var(--sys-color-text-accent);
+}
+
+.connection-list {
+  min-inline-size: 0;
+}
+
+.connection-item {
+  display: grid;
+  min-inline-size: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sys-space-4);
+  align-items: center;
+  border: 1px solid var(--sys-color-border);
+  border-radius: var(--cmp-surface-radius);
+  padding: var(--sys-space-4);
+  background: var(--sys-color-surface-raised);
+}
+
+.connection-item__main {
+  min-inline-size: 0;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--sys-space-2);
+}
+
+.connection-item__name-row {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  gap: var(--sys-space-3);
+}
+
+.connection-item code,
+.connection-result code {
+  display: block;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  color: var(--sys-color-text);
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
+}
+
+.connection-item__error {
+  color: var(--sys-color-danger) !important;
+}
+
+.connection-item__actions {
+  flex: 0 0 auto;
+  gap: var(--sys-space-2);
+}
+
+.connection-state {
+  border-radius: var(--ref-radius-round);
+  padding: 0.18rem 0.55rem;
+  font: var(--sys-typography-caption);
+}
+
+.connection-state--online {
+  background: var(--sys-color-success-subtle);
+  color: var(--sys-color-success-text);
+}
+
+.connection-state--warning {
+  background: var(--sys-color-warning-subtle);
+  color: var(--sys-color-warning-text);
+}
+
+.connection-state--danger {
+  background: var(--sys-color-danger-subtle);
+  color: var(--sys-color-danger-text);
+}
+
+.connection-state--muted {
+  background: var(--sys-color-surface-muted);
+  color: var(--sys-color-text-muted);
+}
+
+.connection-result__copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sys-space-3);
+  align-items: center;
+  border: 1px solid var(--sys-color-border-strong);
+  border-radius: var(--cmp-field-radius);
+  padding: var(--sys-space-3);
+  background: var(--sys-color-field);
+}
+
+@media (max-width: 72rem) {
+  .connections-page__layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 42rem) {
+  .connections-page__header,
+  .connection-result__head,
+  .connection-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .connection-item {
+    display: grid;
+  }
+
+  .connection-item__actions,
+  .connection-result__copy {
+    grid-template-columns: 1fr;
+  }
+}

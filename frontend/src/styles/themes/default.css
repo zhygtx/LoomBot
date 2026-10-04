@@ -1,0 +1,47 @@
+:root,
+:root[data-theme='default'] {
+  color-scheme: light;
+
+  --sys-color-canvas: var(--ref-color-neutral-50);
+  --sys-color-surface-raised: color-mix(in srgb, var(--ref-color-neutral-0) 92%, transparent);
+  --sys-color-surface-muted: color-mix(in srgb, var(--ref-color-neutral-100) 62%, transparent);
+  --sys-color-field: var(--ref-color-neutral-0);
+  --sys-color-text: var(--ref-color-neutral-900);
+  --sys-color-text-muted: var(--ref-color-neutral-500);
+  --sys-color-text-subtle: color-mix(in srgb, var(--ref-color-neutral-500) 72%, transparent);
+  --sys-color-text-accent: var(--ref-color-blue-600);
+  --sys-color-border: color-mix(in srgb, var(--ref-color-neutral-200) 80%, transparent);
+  --sys-color-border-strong: var(--ref-color-neutral-200);
+  --sys-color-border-interactive: color-mix(
+    in srgb,
+    var(--ref-color-blue-500) 55%,
+    var(--ref-color-neutral-200)
+  );
+  --sys-color-action-primary: var(--ref-color-blue-500);
+  --sys-color-action-primary-hover: var(--ref-color-blue-600);
+  --sys-color-action-subtle-hover: var(--ref-color-blue-50);
+  --sys-color-on-action-primary: var(--ref-color-neutral-0);
+  --sys-color-danger: var(--ref-color-red-500);
+  --sys-color-on-danger: var(--ref-color-neutral-0);
+  --sys-color-focus: color-mix(in srgb, var(--ref-color-blue-500) 48%, transparent);
+  --sys-color-brand-canvas: #111d42;
+  --sys-color-on-brand-canvas: #f8faff;
+  --sys-color-on-brand-muted: rgb(226 232 255 / 76%);
+  --sys-color-on-brand-subtle: rgb(226 232 255 / 48%);
+  --sys-color-brand-highlight: #91a7ff;
+
+  --sys-color-info-subtle: #eef4ff;
+  --sys-color-info-border: #c6d6ff;
+  --sys-color-info-text: #2444a0;
+  --sys-color-success-subtle: #ecfdf3;
+  --sys-color-success-border: #b7ebc9;
+  --sys-color-success-text: #176b3b;
+  --sys-color-warning-subtle: #fff8e8;
+  --sys-color-warning-border: #f7d68b;
+  --sys-color-warning-text: #805b0a;
+  --sys-color-danger-subtle: #fff1f1;
+  --sys-color-danger-border: #f4b9bb;
+  --sys-color-danger-text: #a2282d;
+
+  --sys-shadow-raised: 0 1.5rem 4rem rgb(16 24 40 / 10%);
+}

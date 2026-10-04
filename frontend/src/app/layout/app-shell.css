@@ -1,0 +1,376 @@
+.app-shell {
+  display: grid;
+  min-block-size: 100dvh;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  background: var(--sys-color-canvas);
+}
+
+.app-shell--collapsed {
+  grid-template-columns: 4.75rem minmax(0, 1fr);
+}
+
+.app-shell__sidebar {
+  position: sticky;
+  inset-block-start: 0;
+  display: flex;
+  block-size: 100dvh;
+  flex-direction: column;
+  border-inline-end: 1px solid var(--sys-color-border);
+  background: color-mix(in srgb, var(--sys-color-surface-raised) 90%, transparent);
+  padding: var(--sys-space-4);
+  z-index: 20;
+}
+
+.app-shell__brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sys-space-3);
+  min-block-size: 3rem;
+  margin-block-end: var(--sys-space-6);
+}
+
+.app-shell__brand-link {
+  display: inline-flex;
+  min-inline-size: 0;
+  align-items: center;
+  gap: var(--sys-space-3);
+  color: var(--sys-color-text);
+  text-decoration: none;
+}
+
+.app-shell__brand-mark {
+  display: grid;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--sys-color-action-primary) 36%, var(--sys-color-border));
+  border-radius: 0.75rem;
+  background: color-mix(
+    in srgb,
+    var(--sys-color-action-primary) 11%,
+    var(--sys-color-surface-raised)
+  );
+  color: var(--sys-color-action-primary);
+  font: 750 1.1rem/1 var(--ref-font-sans);
+}
+
+.app-shell__brand-copy,
+.app-shell__user-copy {
+  display: grid;
+  min-inline-size: 0;
+  gap: 0.1rem;
+}
+
+.app-shell__brand-copy strong {
+  font: 750 0.95rem/1.1 var(--ref-font-sans);
+}
+
+.app-shell__brand-copy small,
+.app-shell__user-copy small {
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+}
+
+.app-shell__collapse-button,
+.app-shell__mobile-menu,
+.app-shell__refresh {
+  display: inline-grid;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 0.7rem;
+  background: transparent;
+  color: var(--sys-color-text-muted);
+  cursor: pointer;
+}
+
+.app-shell__collapse-button:hover,
+.app-shell__mobile-menu:hover,
+.app-shell__refresh:hover {
+  border-color: var(--sys-color-border);
+  background: var(--sys-color-action-subtle-hover);
+  color: var(--sys-color-text);
+}
+
+.app-shell__nav {
+  display: grid;
+  min-block-size: 0;
+  flex: 1;
+  align-content: start;
+  gap: 0.35rem;
+  overflow-y: auto;
+}
+
+.app-shell__nav-link {
+  display: flex;
+  min-block-size: 2.75rem;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  padding-inline-start: calc(0.75rem + (var(--nav-depth, 0) * 0.9rem));
+  color: var(--sys-color-text-muted);
+  cursor: pointer;
+  font: var(--sys-typography-body-compact);
+  text-align: start;
+  text-decoration: none;
+  transition:
+    background var(--sys-motion-fast),
+    color var(--sys-motion-fast),
+    border-color var(--sys-motion-fast);
+}
+
+.app-shell__nav-link:hover {
+  background: var(--sys-color-action-subtle-hover);
+  color: var(--sys-color-text);
+}
+
+.app-shell__nav-link--active {
+  border-color: color-mix(in srgb, var(--sys-color-action-primary) 18%, var(--sys-color-border));
+  background: color-mix(
+    in srgb,
+    var(--sys-color-action-primary) 10%,
+    var(--sys-color-surface-raised)
+  );
+  color: var(--sys-color-action-primary);
+  font-weight: 650;
+}
+
+.app-shell__nav-link--group {
+  inline-size: 100%;
+  justify-content: flex-start;
+}
+
+.app-shell__nav-link--group-open {
+  color: var(--sys-color-text);
+}
+
+.app-shell__nav-icon {
+  display: inline-grid;
+  inline-size: 1.2rem;
+  flex: 0 0 1.2rem;
+  place-items: center;
+  color: currentColor;
+  font: 650 0.95rem/1 var(--ref-font-sans);
+}
+
+.app-shell__nav-label {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell__nav-chevron {
+  margin-inline-start: auto;
+  color: var(--sys-color-text-muted);
+}
+
+.app-shell__nav-loading {
+  padding: var(--sys-space-3);
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+}
+
+.app-shell__sidebar-footer {
+  display: grid;
+  gap: var(--sys-space-3);
+  margin-block-start: var(--sys-space-4);
+  border-block-start: 1px solid var(--sys-color-border);
+  padding-block-start: var(--sys-space-4);
+}
+
+.app-shell__user {
+  display: flex;
+  min-inline-size: 0;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.app-shell__user-avatar {
+  display: grid;
+  inline-size: 2rem;
+  block-size: 2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--sys-color-action-primary);
+  color: var(--sys-color-on-action-primary);
+  font: 700 0.8rem/1 var(--ref-font-sans);
+}
+
+.app-shell__user-copy strong {
+  overflow: hidden;
+  color: var(--sys-color-text);
+  font: var(--sys-typography-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell__logout {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 0;
+  background: transparent;
+  color: var(--sys-color-text-muted);
+  cursor: pointer;
+  font: var(--sys-typography-caption);
+  text-align: start;
+}
+
+.app-shell__logout:hover {
+  color: var(--sys-color-danger-text);
+}
+
+.app-shell__main {
+  min-inline-size: 0;
+}
+
+.app-shell__topbar {
+  position: sticky;
+  inset-block-start: 0;
+  display: flex;
+  min-block-size: 4rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sys-space-4);
+  border-block-end: 1px solid var(--sys-color-border);
+  background: color-mix(in srgb, var(--sys-color-canvas) 88%, transparent);
+  padding: 0 clamp(var(--sys-space-4), 3vw, var(--sys-space-7));
+  backdrop-filter: blur(1rem);
+  z-index: 10;
+}
+
+.app-shell__mobile-menu {
+  display: none;
+}
+
+.app-shell__breadcrumbs {
+  display: flex;
+  min-inline-size: 0;
+  align-items: center;
+  gap: 0.55rem;
+  overflow: hidden;
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+  white-space: nowrap;
+}
+
+.app-shell__breadcrumbs a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-shell__breadcrumbs a:hover {
+  color: var(--sys-color-action-primary);
+}
+
+.app-shell__breadcrumb-current {
+  overflow: hidden;
+  color: var(--sys-color-text);
+  font-weight: 650;
+  text-overflow: ellipsis;
+}
+
+.app-shell__topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sys-space-3);
+}
+
+.app-shell__page-title {
+  color: var(--sys-color-text-muted);
+  font: var(--sys-typography-caption);
+}
+
+.app-shell__content {
+  min-block-size: calc(100dvh - 4rem);
+  padding: clamp(var(--sys-space-4), 3vw, var(--sys-space-7));
+}
+
+.app-shell--collapsed .app-shell__brand-copy,
+.app-shell--collapsed .app-shell__nav-label,
+.app-shell--collapsed .app-shell__nav-chevron,
+.app-shell--collapsed .app-shell__user-copy,
+.app-shell--collapsed .app-shell__logout {
+  display: none;
+}
+
+.app-shell--collapsed .app-shell__brand {
+  justify-content: center;
+}
+
+.app-shell--collapsed .app-shell__collapse-button {
+  position: absolute;
+  inset-block-start: 4.4rem;
+  inset-inline-end: -0.75rem;
+  border-color: var(--sys-color-border);
+  background: var(--sys-color-surface-raised);
+}
+
+.app-shell--collapsed .app-shell__nav-link {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.app-shell--collapsed .app-shell__user {
+  justify-content: center;
+}
+
+.app-shell__scrim {
+  display: none;
+}
+
+@media (max-width: 48rem) {
+  .app-shell,
+  .app-shell--collapsed {
+    display: block;
+  }
+
+  .app-shell__sidebar {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: min(18rem, calc(100vw - 3rem));
+    transform: translateX(-105%);
+    transition: transform var(--sys-motion-normal);
+  }
+
+  .app-shell__sidebar--open {
+    transform: translateX(0);
+  }
+
+  .app-shell__scrim {
+    position: fixed;
+    inset: 0;
+    display: block;
+    border: 0;
+    background: rgb(18 25 46 / 28%);
+    cursor: pointer;
+    z-index: 15;
+  }
+
+  .app-shell__mobile-menu {
+    display: inline-grid;
+  }
+
+  .app-shell__topbar {
+    min-block-size: 3.75rem;
+    padding-inline: var(--sys-space-4);
+  }
+
+  .app-shell__page-title {
+    display: none;
+  }
+
+  .app-shell__content {
+    min-block-size: calc(100dvh - 3.75rem);
+    padding: var(--sys-space-4);
+  }
+}

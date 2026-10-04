@@ -1,0 +1,80 @@
+# ========================================
+# LoomBot Frontend Git 排除规则
+# ========================================
+
+# 依赖目录：通过 package.json 和 package-lock.json 重新安装。
+node_modules/
+
+# 构建产物与工具缓存。
+dist/
+.vite/
+.cache/
+.parcel-cache/
+.turbo/
+.eslintcache
+*.tsbuildinfo
+
+# 测试与覆盖率产物（当前未接测试，提前避免以后误提交）。
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# 本机环境变量和覆盖配置。
+# 示例文件必须提交，真实密钥和本机地址不得提交。
+.env
+.env.*
+!.env.example
+*.local
+
+# 日志、调试信息和临时文件。
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# 操作系统生成文件。
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# JetBrains IDE 私有工程配置。
+.idea/
+*.iml
+
+# VS Code：忽略个人设置，只提交团队共享的扩展和格式化配置。
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# 编辑器和本地工具目录。
+.history/
+.fleet/
+
+# 本机证书和私钥。
+*.pem
+*.key
+*.p12
+*.pfx
+
+# 压缩包通常是本机备份或发布产物。
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# 不要排除以下项目文件：
+# package-lock.json  保证依赖版本可复现
+# docs/             前端架构和技术决策文档
+# .env.example      环境变量模板，不含真实凭据
+/docs/

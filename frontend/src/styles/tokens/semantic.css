@@ -1,0 +1,24 @@
+:root {
+  --sys-space-1: var(--ref-space-1);
+  --sys-space-2: var(--ref-space-2);
+  --sys-space-3: var(--ref-space-3);
+  --sys-space-4: var(--ref-space-4);
+  --sys-space-5: var(--ref-space-5);
+  --sys-space-6: var(--ref-space-6);
+  --sys-space-7: var(--ref-space-7);
+  --sys-space-page: clamp(var(--ref-space-4), 4vw, var(--ref-space-10));
+
+  --sys-typography-body: 400 1rem/1.7 var(--ref-font-sans);
+  --sys-typography-body-compact: 400 0.9375rem/1.5 var(--ref-font-sans);
+  --sys-typography-label: 650 0.75rem/1.4 var(--ref-font-sans);
+  --sys-typography-label-strong: 650 0.8125rem/1.4 var(--ref-font-sans);
+  --sys-typography-caption: 400 0.8125rem/1.45 var(--ref-font-sans);
+  --sys-typography-control: 600 0.9375rem/1 var(--ref-font-sans);
+  --sys-typography-display: 700 clamp(2rem, 5vw, 3.5rem) / 1.08 var(--ref-font-sans);
+
+  --sys-motion-fast: var(--ref-duration-fast) ease;
+  --sys-motion-normal: var(--ref-duration-normal) ease;
+  --sys-focus-width: 0.1875rem;
+  --sys-focus-offset: 0.125rem;
+  --sys-opacity-disabled: 0.5;
+}
