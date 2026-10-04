@@ -1,8 +1,9 @@
 name: Deploy
 
 on:
-  push:
-    branches: [main]
+  # 暂时只保留手动触发：GitHub 托管 runner 在美国，直连北京服务器上传 54MB 产物
+  # 实测只有 26 KB/s，要 35 分钟。等接入 Cloudflare R2 中转（服务器下载实测 5.8 MB/s）
+  # 并手动跑通一次后，再恢复 push 到 main 自动部署。
   workflow_dispatch:
 
 # 部署串行执行；不取消正在进行的部署，避免 release 切到一半被打断。
