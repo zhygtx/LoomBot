@@ -249,10 +249,13 @@ class WorkflowEngine:
         else:
             event_node_id = None
             start_node_ids = [str(node_id) for node_id in start_node_ids]
+        connection_id = job.get("connectionId")
         outcome.trigger = {
             "eventNodeKey": job.get("nodeKey"),
             "eventNodeName": _node_name(definition, event_node_id),
-            "connectionId": job.get("connectionId"),
+            # 雪花 ID 进入 JSON 日志前必须转成字符串：前端用 Number 解析，
+            # 超过 2^53 会直接损失精度，并触发“不安全的数字 ID”。
+            "connectionId": None if connection_id in (None, "") else str(connection_id),
             # 先用任务里的载荷兜底；事件节点真正跑起来之后会用它的输出覆盖（见 _run_node）
             "eventSummary": _summarize(job.get("event") or {}),
         }
