@@ -4,12 +4,19 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.loombot.plugin.PluginProperties;
 import com.loombot.plugin.PluginRepoDefinition;
 import com.loombot.plugin.domain.Plugin;
+import com.loombot.plugin.domain.PluginCapability;
+import com.loombot.plugin.domain.PluginConnectionType;
+import com.loombot.plugin.domain.PluginDependency;
 import com.loombot.plugin.domain.PluginNode;
 import com.loombot.plugin.domain.PluginRepository;
 import com.loombot.plugin.domain.PluginVersion;
 import com.loombot.plugin.dto.PluginRepoRequest;
 import com.loombot.plugin.dto.PluginRepoResponse;
 import com.loombot.plugin.event.PluginNodesChangedEvent;
+import com.loombot.plugin.event.PluginVersionsRemovedEvent;
+import com.loombot.plugin.mapper.PluginCapabilityMapper;
+import com.loombot.plugin.mapper.PluginConnectionTypeMapper;
+import com.loombot.plugin.mapper.PluginDependencyMapper;
 import com.loombot.plugin.mapper.PluginMapper;
 import com.loombot.plugin.mapper.PluginNodeMapper;
 import com.loombot.plugin.mapper.PluginRepositoryMapper;
@@ -21,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -36,6 +44,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.ObjectMapper;
 
@@ -73,6 +82,9 @@ public class PluginRepositoryAdminService {
     private final PluginMapper pluginMapper;
     private final PluginVersionMapper versionMapper;
     private final PluginNodeMapper nodeMapper;
+    private final PluginCapabilityMapper capabilityMapper;
+    private final PluginConnectionTypeMapper connectionTypeMapper;
+    private final PluginDependencyMapper dependencyMapper;
     private final ApplicationEventPublisher events;
     private final ObjectMapper objectMapper;
 
@@ -84,6 +96,9 @@ public class PluginRepositoryAdminService {
             PluginMapper pluginMapper,
             PluginVersionMapper versionMapper,
             PluginNodeMapper nodeMapper,
+            PluginCapabilityMapper capabilityMapper,
+            PluginConnectionTypeMapper connectionTypeMapper,
+            PluginDependencyMapper dependencyMapper,
             ApplicationEventPublisher events,
             ObjectMapper objectMapper) {
         this.properties = properties;
@@ -93,6 +108,9 @@ public class PluginRepositoryAdminService {
         this.pluginMapper = pluginMapper;
         this.versionMapper = versionMapper;
         this.nodeMapper = nodeMapper;
+        this.capabilityMapper = capabilityMapper;
+        this.connectionTypeMapper = connectionTypeMapper;
+        this.dependencyMapper = dependencyMapper;
         this.events = events;
         this.objectMapper = objectMapper;
     }
@@ -171,11 +189,10 @@ public class PluginRepositoryAdminService {
     /**
      * 删掉库文件夹和它的同步状态行。
      *
-     * <p>插件不级联删：先按"所有节点都没了"发一次变更事件，让工作流侧标提醒、摘掉触发， 再删文件夹、删状态行。这条链路和插件原地改代码时用的是同一条，不另起一套。
-     *
-     * <p>状态行也删掉：文件夹没了，它就只剩"上次同步到哪"这点残影，还要求列表显示一条没有 对应文件夹的记录。插件行保留，所以工作流的失效提醒仍然成立——提醒认的是 {@code
-     * plugin_version_id}，不是仓库行。
+     * <p>删除前先把整个库的节点按"全部移除"发事件：工作流侧保留身份快照并标失效，连接侧 清理绑定这些版本的连接。然后插件目录行、版本行和同步状态行一起物理删除，数据库只保留
+     * "当前确实存在"的插件数据。
      */
+    @Transactional
     public void delete(String key) {
         String cleanKey = requireKey(key);
         Optional<Path> folder = findFolderByKey(cleanKey);
@@ -276,7 +293,7 @@ public class PluginRepositoryAdminService {
         return Optional.empty();
     }
 
-    /** 通知工作流侧：这个库下所有版本的节点都没了。 */
+    /** 通知依赖方并删除这个库的插件目录数据。 */
     private void detachPlugins(String repoKey) {
         PluginRepository state =
                 repositoryMapper.selectOne(
@@ -297,20 +314,64 @@ public class PluginRepositoryAdminService {
                 versionMapper.selectList(
                         new LambdaQueryWrapper<PluginVersion>()
                                 .in(PluginVersion::getPluginId, pluginIds));
+        Map<Long, String> keyByPluginId = new HashMap<>();
+        plugins.forEach(plugin -> keyByPluginId.put(plugin.getId(), plugin.getPluginKey()));
         for (PluginVersion version : versions) {
-            List<String> nodeKeys =
+            List<PluginNodesChangedEvent.NodeChange> removedNodes =
                     nodeMapper
                             .selectList(
                                     new LambdaQueryWrapper<PluginNode>()
                                             .eq(PluginNode::getPluginVersionId, version.getId()))
                             .stream()
-                            .map(PluginNode::getNodeKey)
+                            .map(
+                                    row ->
+                                            new PluginNodesChangedEvent.NodeChange(
+                                                    row.getNodeKey(),
+                                                    row.getName(),
+                                                    row.getNodeType(),
+                                                    row.getConnectionType()))
                             .toList();
-            if (nodeKeys.isEmpty()) {
+            if (removedNodes.isEmpty()) {
                 continue;
             }
-            events.publishEvent(new PluginNodesChangedEvent(version.getId(), List.of(), nodeKeys));
+            events.publishEvent(
+                    new PluginNodesChangedEvent(
+                            version.getId(),
+                            keyByPluginId.get(version.getPluginId()),
+                            version.getVersion(),
+                            List.of(),
+                            removedNodes));
         }
+        // 整个库下架时，绑定在这些版本上的连接也要清掉。
+        if (!versions.isEmpty()) {
+            events.publishEvent(
+                    new PluginVersionsRemovedEvent(
+                            versions.stream().map(PluginVersion::getId).toList()));
+        }
+
+        List<Long> versionIds = versions.stream().map(PluginVersion::getId).toList();
+        if (!versionIds.isEmpty()) {
+            capabilityMapper.delete(
+                    new LambdaQueryWrapper<PluginCapability>()
+                            .in(PluginCapability::getPluginVersionId, versionIds));
+            connectionTypeMapper.delete(
+                    new LambdaQueryWrapper<PluginConnectionType>()
+                            .in(PluginConnectionType::getPluginVersionId, versionIds));
+            nodeMapper.delete(
+                    new LambdaQueryWrapper<PluginNode>()
+                            .in(PluginNode::getPluginVersionId, versionIds));
+            dependencyMapper.delete(
+                    new LambdaQueryWrapper<PluginDependency>()
+                            .in(PluginDependency::getPluginVersionId, versionIds));
+            versionMapper.delete(
+                    new LambdaQueryWrapper<PluginVersion>().in(PluginVersion::getId, versionIds));
+        }
+        pluginMapper.delete(new LambdaQueryWrapper<Plugin>().in(Plugin::getId, pluginIds));
+        log.info(
+                "插件库目录数据已清空: repoKey={} plugins={} versions={}",
+                repoKey,
+                pluginIds.size(),
+                versionIds.size());
     }
 
     private void extractZip(Path folder, MultipartFile file) throws IOException {

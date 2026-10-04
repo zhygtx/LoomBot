@@ -16,6 +16,7 @@ import com.loombot.connection.dto.ConnectionUpdateRequest;
 import com.loombot.connection.manager.ConnectionManager;
 import com.loombot.connection.mapper.WsConnectionMapper;
 import com.loombot.connection.usage.ConnectionUsageGuard;
+import com.loombot.plugin.event.PluginVersionsRemovedEvent;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
@@ -25,6 +26,7 @@ import java.util.Objects;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -280,6 +282,55 @@ public class WsConnectionService {
                     usageGuard.onConnectionDeleted(id);
                 });
         log.info("连接已删除: id={}", id);
+    }
+
+    /**
+     * 插件版本被移除时的系统级清理：把这些版本上的连接一并删掉。
+     *
+     * <p>和用户主动删除的区别是不做归属校验、也不因"有工作流在用"而拒绝——版本已经从目录里 消失，这个连接不可能再启动成功，留着只是一个永远不可用的幽灵。工作流那边由插件节点失效
+     * 记录负责解释发生了什么，所以这里可以直接删干净。
+     *
+     * @return 实际删除的连接数
+     */
+    @Transactional
+    public int deleteByPluginVersions(List<Long> pluginVersionIds) {
+        if (pluginVersionIds == null || pluginVersionIds.isEmpty()) {
+            return 0;
+        }
+        List<WsConnection> rows =
+                mapper.selectList(
+                        new LambdaQueryWrapper<WsConnection>()
+                                .in(WsConnection::getPluginVersionId, pluginVersionIds));
+        for (WsConnection row : rows) {
+            Long id = row.getId();
+            try {
+                manager.stop(id);
+            } catch (RuntimeException e) {
+                // 适配器不可达时也要把定义删掉：它指向的版本已经不存在了
+                log.warn("停止连接失败，仍然删除定义: id={} error={}", id, e.getMessage());
+            }
+            mapper.deleteById(id);
+            afterCommit(
+                    () -> {
+                        manager.forget(id);
+                        usageGuard.onConnectionDeleted(id);
+                    });
+            log.warn("连接因插件版本被移除而删除: id={} version={}", id, row.getPluginVersionId());
+        }
+        return rows.size();
+    }
+
+    /** 插件目录里版本被移除之后，清理绑定在这些版本上的连接。 */
+    @EventListener
+    @Transactional
+    public void onPluginVersionsRemoved(PluginVersionsRemovedEvent event) {
+        int deleted = deleteByPluginVersions(event.pluginVersionIds());
+        if (deleted > 0) {
+            log.warn(
+                    "插件版本移除清理完成: versions={} deletedConnections={}",
+                    event.pluginVersionIds(),
+                    deleted);
+        }
     }
 
     // ==================================================================

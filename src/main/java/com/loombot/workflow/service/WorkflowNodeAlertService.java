@@ -2,6 +2,8 @@ package com.loombot.workflow.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.loombot.connection.domain.WsConnection;
+import com.loombot.connection.mapper.WsConnectionMapper;
 import com.loombot.plugin.event.PluginNodesChangedEvent;
 import com.loombot.workflow.domain.WorkflowInfo;
 import com.loombot.workflow.domain.WorkflowNodeAlert;
@@ -47,6 +49,7 @@ public class WorkflowNodeAlertService {
     private final WorkflowNodeAlertMapper alertMapper;
     private final WorkflowInfoMapper infoMapper;
     private final WorkflowVersionMapper versionMapper;
+    private final WsConnectionMapper connectionMapper;
     private final WorkflowTriggerIndexService indexService;
     private final WorkflowDefinitionValidator validator;
     private final ApplicationEventPublisher events;
@@ -56,6 +59,7 @@ public class WorkflowNodeAlertService {
             WorkflowNodeAlertMapper alertMapper,
             WorkflowInfoMapper infoMapper,
             WorkflowVersionMapper versionMapper,
+            WsConnectionMapper connectionMapper,
             WorkflowTriggerIndexService indexService,
             WorkflowDefinitionValidator validator,
             ApplicationEventPublisher events,
@@ -63,6 +67,7 @@ public class WorkflowNodeAlertService {
         this.alertMapper = alertMapper;
         this.infoMapper = infoMapper;
         this.versionMapper = versionMapper;
+        this.connectionMapper = connectionMapper;
         this.indexService = indexService;
         this.validator = validator;
         this.events = events;
@@ -72,21 +77,36 @@ public class WorkflowNodeAlertService {
     /** 插件节点契约变化：标提醒 + 摘触发。 */
     @EventListener
     public void onPluginNodesChanged(PluginNodesChangedEvent event) {
+        Map<String, PluginNodesChangedEvent.NodeChange> changes = new LinkedHashMap<>();
         Map<String, String> reasons = new LinkedHashMap<>();
-        event.changedNodeKeys().forEach(key -> reasons.put(key, WorkflowNodeAlert.REASON_CHANGED));
-        event.removedNodeKeys().forEach(key -> reasons.put(key, WorkflowNodeAlert.REASON_REMOVED));
+        event.changedNodes()
+                .forEach(
+                        node -> {
+                            changes.put(node.nodeKey(), node);
+                            reasons.put(node.nodeKey(), WorkflowNodeAlert.REASON_CHANGED);
+                        });
+        event.removedNodes()
+                .forEach(
+                        node -> {
+                            changes.put(node.nodeKey(), node);
+                            reasons.put(node.nodeKey(), WorkflowNodeAlert.REASON_REMOVED);
+                        });
         if (reasons.isEmpty()) {
             return;
         }
         try {
-            applyChanges(event.pluginVersionId(), reasons);
+            applyChanges(event, changes, reasons);
         } catch (RuntimeException e) {
             // 提醒是通知性质，不该因为它失败就把整次插件同步判成失败
             log.error("处理插件节点变更失败，工作流提醒可能不全: version={}", event.pluginVersionId(), e);
         }
     }
 
-    private void applyChanges(long pluginVersionId, Map<String, String> reasons) {
+    private void applyChanges(
+            PluginNodesChangedEvent event,
+            Map<String, PluginNodesChangedEvent.NodeChange> changes,
+            Map<String, String> reasons) {
+        long pluginVersionId = event.pluginVersionId();
         Set<Long> touched = new LinkedHashSet<>();
         List<WorkflowInfo> workflows =
                 infoMapper.selectList(
@@ -110,8 +130,7 @@ public class WorkflowNodeAlertService {
                 if (reason == null) {
                     continue;
                 }
-                writeAlert(
-                        info.getId(), node.path("id").asText(""), nodeKey, pluginVersionId, reason);
+                writeAlert(info, version, node, event, changes.get(nodeKey), reason);
                 touched.add(info.getId());
             }
         }
@@ -127,41 +146,80 @@ public class WorkflowNodeAlertService {
         }
     }
 
+    /** 写一条失效记录。身份快照从事件里抄，目录行删掉之后这条记录仍然能解释"原来是什么、为什么没了"。 */
     private void writeAlert(
-            Long workflowId, String nodeId, String nodeKey, Long pluginVersionId, String reason) {
+            WorkflowInfo info,
+            WorkflowVersion version,
+            JsonNode node,
+            PluginNodesChangedEvent event,
+            PluginNodesChangedEvent.NodeChange change,
+            String reason) {
+        String nodeId = node.path("id").asText("");
         if (nodeId.isBlank()) {
             return;
         }
-        Long existing =
-                alertMapper.selectCount(
+        WorkflowNodeAlert alert = new WorkflowNodeAlert();
+        alert.setWorkflowId(info.getId());
+        alert.setWorkflowVersionId(version == null ? null : version.getId());
+        alert.setNodeId(nodeId);
+        alert.setNodeKey(change == null ? node.path("nodeKey").asText("") : change.nodeKey());
+        alert.setNodeName(change == null ? null : trim(change.nodeName()));
+        alert.setNodeType(change == null ? null : change.nodeType());
+        alert.setPluginKey(event.pluginKey());
+        alert.setPluginVersion(event.pluginVersion());
+        alert.setPluginVersionId(event.pluginVersionId());
+        Long connectionId = JsonIds.parse(node, "connectionId");
+        alert.setConnectionId(connectionId);
+        alert.setConnectionName(connectionName(connectionId));
+        alert.setReason(reason);
+        alert.setDetail(
+                WorkflowNodeAlert.REASON_REMOVED.equals(reason) ? "节点已从插件目录移除" : "节点契约或实现已变更");
+        alert.setDetectedAt(LocalDateTime.now());
+        upsert(alert);
+    }
+
+    /** 同一个（工作流，画布节点）只保留一条记录；状态变化时以最新原因覆盖。 */
+    private void upsert(WorkflowNodeAlert alert) {
+        WorkflowNodeAlert existing =
+                alertMapper.selectOne(
                         new LambdaQueryWrapper<WorkflowNodeAlert>()
-                                .eq(WorkflowNodeAlert::getWorkflowId, workflowId)
-                                .eq(WorkflowNodeAlert::getNodeId, nodeId));
-        if (existing != null && existing > 0) {
+                                .eq(WorkflowNodeAlert::getWorkflowId, alert.getWorkflowId())
+                                .eq(WorkflowNodeAlert::getNodeId, alert.getNodeId()));
+        if (existing != null) {
+            alert.setId(existing.getId());
+            alert.setCreateTime(existing.getCreateTime());
+            alertMapper.updateById(alert);
             return;
         }
-        WorkflowNodeAlert alert = new WorkflowNodeAlert();
         alert.setId(IdWorker.getId());
-        alert.setWorkflowId(workflowId);
-        alert.setNodeId(nodeId);
-        alert.setNodeKey(nodeKey);
-        alert.setPluginVersionId(pluginVersionId);
-        alert.setReason(reason);
         alert.setCreateTime(LocalDateTime.now());
         alertMapper.insert(alert);
+    }
+
+    private static String trim(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.length() <= 128 ? value : value.substring(0, 128);
     }
 
     /** 从触发链路里摘掉：先删 Redis 索引，再把状态改成停用。 */
     private void detachFromTriggers(Long workflowId) {
         WorkflowInfo info = infoMapper.selectById(workflowId);
-        if (info == null || !Integer.valueOf(1).equals(info.getEnabled())) {
+        if (info == null) {
             return;
         }
         Long versionId = info.getCurrentVersionId();
-        if (versionId != null) {
-            unindexVersion(versionId);
+        if (Integer.valueOf(1).equals(info.getEnabled())) {
+            if (versionId != null) {
+                unindexVersion(versionId);
+            }
+            info.setEnabled(0);
         }
-        info.setEnabled(0);
+        // availability 是系统判定、enabled 是用户开关，这里两个都动是过渡态：
+        // 触发链路（定时快照）目前仍按 enabled 过滤，等它切到 availability 之后这里就不再碰 enabled。
+        info.setAvailability(WorkflowInfo.AVAILABILITY_UNAVAILABLE);
+        info.setAvailabilityCheckedAt(LocalDateTime.now());
         info.setUpdateTime(LocalDateTime.now());
         infoMapper.updateById(info);
         log.info("工作流因插件节点变更被停用: workflow={} version={}", workflowId, versionId);
@@ -209,14 +267,14 @@ public class WorkflowNodeAlertService {
             }
             String currentHash = currentSignature(pluginVersionId, nodeKey);
             if (currentHash == null) {
-                writeAlert(
+                writeMinimalAlert(
                         workflowId,
                         nodeId,
                         nodeKey,
                         pluginVersionId,
                         WorkflowNodeAlert.REASON_REMOVED);
             } else if (!currentHash.equals(storedHash)) {
-                writeAlert(
+                writeMinimalAlert(
                         workflowId,
                         nodeId,
                         nodeKey,
@@ -224,6 +282,37 @@ public class WorkflowNodeAlertService {
                         WorkflowNodeAlert.REASON_CHANGED);
             }
         }
+        // 重算之后没有失效记录，说明用户已经改好了，把系统判定恢复回可用。
+        WorkflowInfo info = infoMapper.selectById(workflowId);
+        if (info != null) {
+            info.setAvailability(
+                    hasAlert(workflowId)
+                            ? WorkflowInfo.AVAILABILITY_UNAVAILABLE
+                            : WorkflowInfo.AVAILABILITY_AVAILABLE);
+            info.setAvailabilityCheckedAt(LocalDateTime.now());
+            infoMapper.updateById(info);
+        }
+    }
+
+    /** 保存时重算只判断"还在不在、哈希一不一致"，没有目录里的身份快照可抄。 */
+    private void writeMinimalAlert(
+            Long workflowId, String nodeId, String nodeKey, Long pluginVersionId, String reason) {
+        WorkflowNodeAlert alert = new WorkflowNodeAlert();
+        alert.setWorkflowId(workflowId);
+        alert.setNodeId(nodeId);
+        alert.setNodeKey(nodeKey);
+        alert.setPluginVersionId(pluginVersionId);
+        alert.setReason(reason);
+        alert.setDetectedAt(LocalDateTime.now());
+        upsert(alert);
+    }
+
+    private String connectionName(Long connectionId) {
+        if (connectionId == null) {
+            return null;
+        }
+        WsConnection connection = connectionMapper.selectById(connectionId);
+        return connection == null ? null : connection.getName();
     }
 
     private String currentSignature(Long pluginVersionId, String nodeKey) {
@@ -235,6 +324,13 @@ public class WorkflowNodeAlertService {
                 new LambdaQueryWrapper<WorkflowNodeAlert>()
                         .eq(WorkflowNodeAlert::getWorkflowId, workflowId)
                         .orderByAsc(WorkflowNodeAlert::getCreateTime));
+    }
+
+    /** 工作流删除时一起清掉提醒；这张表按 workflow_id 关联，没有数据库外键兜底。 */
+    public void removeWorkflow(Long workflowId) {
+        alertMapper.delete(
+                new LambdaQueryWrapper<WorkflowNodeAlert>()
+                        .eq(WorkflowNodeAlert::getWorkflowId, workflowId));
     }
 
     public boolean hasAlert(Long workflowId) {

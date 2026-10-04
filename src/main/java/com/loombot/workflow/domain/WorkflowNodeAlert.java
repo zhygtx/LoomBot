@@ -30,4 +30,20 @@ public class WorkflowNodeAlert {
     private String reason;
     private String detail;
     private LocalDateTime createTime;
+
+    /**
+     * 以下都是**从插件目录抄过来的身份快照**。
+     *
+     * <p>插件目录改成可变镜像之后，被删除的版本/节点/连接类型会直接从库里消失。 那时这条记录是唯一还能解释"原来是什么、为什么失效"的地方，所以身份信息必须自带， 不能再依赖 join
+     * 插件目录表。
+     */
+    private Long workflowVersionId;
+
+    private String nodeName;
+    private String nodeType;
+    private String pluginKey;
+    private String pluginVersion;
+    private Long connectionId;
+    private String connectionName;
+    private LocalDateTime detectedAt;
 }

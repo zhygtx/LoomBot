@@ -12,6 +12,7 @@ import com.loombot.plugin.domain.PluginNode;
 import com.loombot.plugin.domain.PluginRepository;
 import com.loombot.plugin.domain.PluginVersion;
 import com.loombot.plugin.event.PluginNodesChangedEvent;
+import com.loombot.plugin.event.PluginVersionsRemovedEvent;
 import com.loombot.plugin.mapper.PluginCapabilityMapper;
 import com.loombot.plugin.mapper.PluginConnectionTypeMapper;
 import com.loombot.plugin.mapper.PluginDependencyMapper;
@@ -207,9 +208,12 @@ public class PluginSyncService {
         }
 
         List<PluginNodesChangedEvent> pendingChanges = new ArrayList<>();
+        List<Long> pendingRemovals = new ArrayList<>();
         try {
             transactionTemplate.executeWithoutResult(
-                    status -> applyCatalog(state, snapshot, catalog, pendingChanges));
+                    status ->
+                            applyCatalog(
+                                    state, snapshot, catalog, pendingChanges, pendingRemovals));
             state.setLastCommitHash(scanKey);
             state.setLastScanTime(LocalDateTime.now());
             state.setLastError(null);
@@ -222,6 +226,10 @@ public class PluginSyncService {
             // 节点变更事件在事务提交之后再发：监听方要写工作流提醒、动 Redis 和定时快照，
             // 这些都不是事务性的，放在事务里会变成"插件回滚了但提醒留下了"。
             pendingChanges.forEach(events::publishEvent);
+            // 版本行此刻已经删掉了，连接模块只能靠这个事件知道"绑定的版本没了"。
+            if (!pendingRemovals.isEmpty()) {
+                events.publishEvent(new PluginVersionsRemovedEvent(List.copyOf(pendingRemovals)));
+            }
         } catch (RuntimeException e) {
             markError(state, e.getMessage());
             throw e;
@@ -232,7 +240,8 @@ public class PluginSyncService {
             PluginRepository repository,
             PluginRepositorySynchronizer.RepositorySnapshot snapshot,
             PluginCatalogScanner.RepoCatalog catalog,
-            List<PluginNodesChangedEvent> pendingChanges) {
+            List<PluginNodesChangedEvent> pendingChanges,
+            List<Long> pendingRemovals) {
         // 按仓库取全部插件再按 plugin_key 索引：plugin_key 现在可能带命名空间前缀（alice.text-tools），
         // 拿索引里的裸 key 去 IN 查是查不到的。
         Map<String, Plugin> pluginsByKey =
@@ -274,39 +283,62 @@ public class PluginSyncService {
                 scanVersion(plugin, scanned, version, snapshot, versionsByKey, batch);
             }
         }
-        detectRemovedVersions(versionsByKey, seenVersions, batch);
+        detectRemovedVersions(pluginsByKey, versionsByKey, seenVersions, batch);
         flushBatch(batch);
         pendingChanges.addAll(batch.nodeChanges);
+        pendingRemovals.addAll(batch.removedVersionIds);
     }
 
     /**
      * 库索引里已经没有的版本：作者撤下了自己的版本（或整个插件下架）。
      *
-     * <p>和「节点被删」走同一条链路：把这个版本现有的节点全部报成 removed，工作流侧据此标失效、 摘掉触发。行不删——工作流的失效提醒认的是 {@code
-     * plugin_version_id}，留着它提醒才成立。
+     * <p>和「节点被删」走同一条链路：把这个版本现有的节点全部报成 removed，工作流侧据此把身份
+     * 快照记到自己的工作流节点状态上。报完之后目录行**直接删除**——数据库只镜像"当前存在什么"， 被删节点除了引用它的工作流之外没有任何入口，那份记忆职责交给工作流。
      */
     private void detectRemovedVersions(
+            Map<String, Plugin> pluginsByKey,
             Map<VersionKey, PluginVersion> versionsByKey,
             Set<VersionKey> seenVersions,
             SyncBatch batch) {
+        Map<Long, String> keyByPluginId = new HashMap<>();
+        pluginsByKey.forEach((key, plugin) -> keyByPluginId.put(plugin.getId(), key));
         for (Map.Entry<VersionKey, PluginVersion> entry : versionsByKey.entrySet()) {
             if (seenVersions.contains(entry.getKey())) {
                 continue;
             }
-            long versionId = entry.getValue().getId();
-            List<String> nodeKeys =
+            PluginVersion version = entry.getValue();
+            long versionId = version.getId();
+            List<PluginNodesChangedEvent.NodeChange> removedNodes =
                     nodeMapper
                             .selectList(
                                     new LambdaQueryWrapper<PluginNode>()
                                             .eq(PluginNode::getPluginVersionId, versionId))
                             .stream()
-                            .map(PluginNode::getNodeKey)
+                            .map(
+                                    row ->
+                                            new PluginNodesChangedEvent.NodeChange(
+                                                    row.getNodeKey(),
+                                                    row.getName(),
+                                                    row.getNodeType(),
+                                                    row.getConnectionType()))
                             .toList();
-            if (nodeKeys.isEmpty()) {
-                continue;
+            String pluginKey = keyByPluginId.get(version.getPluginId());
+            if (!removedNodes.isEmpty()) {
+                batch.nodeChanges.add(
+                        new PluginNodesChangedEvent(
+                                versionId,
+                                pluginKey,
+                                version.getVersion(),
+                                List.of(),
+                                removedNodes));
             }
-            batch.nodeChanges.add(new PluginNodesChangedEvent(versionId, List.of(), nodeKeys));
-            log.warn("插件版本已从库索引移除，引用它的工作流将标失效: version={} nodes={}", versionId, nodeKeys.size());
+            batch.removedVersionIds.add(versionId);
+            batch.removedPluginIds.add(version.getPluginId());
+            log.warn(
+                    "插件版本已从目录移除，将删除其目录行并标记引用它的工作流: plugin={} version={} nodes={}",
+                    pluginKey,
+                    version.getVersion(),
+                    removedNodes.size());
         }
     }
 
@@ -412,7 +444,14 @@ public class PluginSyncService {
         for (AdapterDeclaration adapter : adapters) {
             appendConnectionType(batch, version.getId(), plugin, manifest, adapter);
         }
-        appendCatalogNodes(batch, version.getId(), pluginDir, adapters, scannedVersion.catalog());
+        appendCatalogNodes(
+                batch,
+                version.getId(),
+                plugin.getPluginKey(),
+                scannedVersion.version(),
+                pluginDir,
+                adapters,
+                scannedVersion.catalog());
         appendDependencies(batch, version.getId(), pluginDir);
         log.info(
                 "插件版本已{}: {}-{}, adapters={}",
@@ -623,6 +662,8 @@ public class PluginSyncService {
     private void appendCatalogNodes(
             SyncBatch batch,
             long versionId,
+            String pluginKey,
+            String pluginVersion,
             Path pluginDir,
             List<AdapterDeclaration> adapters,
             PluginCatalogScanner.Catalog catalog) {
@@ -641,16 +682,18 @@ public class PluginSyncService {
         // 变更检测必须在 flushBatch 删旧行之前做：拿旧目录和新目录比，
         // 同一个 nodeKey 签名变了 = 契约变更，旧的有、新的没有 = 节点被删。
         // 两者都要通知出去，引用了它们的工作流会被标上提醒。
-        Map<String, String> previousSignatures = existingNodeSignatures(versionId);
+        Map<String, PluginNode> previousNodes = existingNodes(versionId);
         Set<String> seenKeys = new HashSet<>();
-        List<String> changedKeys = new ArrayList<>();
+        List<PluginNodesChangedEvent.NodeChange> changed = new ArrayList<>();
         for (PluginCatalogScanner.ScannedNode node : catalog.nodes()) {
             String nodeKey = required(node.nodeKey(), "nodeKey", pluginDir);
             String signature = nodeSignature(node);
             seenKeys.add(nodeKey);
-            String previous = previousSignatures.get(nodeKey);
-            if (previous != null && !previous.equals(signature)) {
-                changedKeys.add(nodeKey);
+            PluginNode previous = previousNodes.get(nodeKey);
+            if (previous != null && !nz(previous.getSignatureHash()).equals(signature)) {
+                changed.add(
+                        new PluginNodesChangedEvent.NodeChange(
+                                nodeKey, node.name(), node.nodeType(), node.connectionType()));
             }
             PluginNode entity = new PluginNode();
             entity.setId(IdWorker.getId());
@@ -669,32 +712,39 @@ public class PluginSyncService {
             entity.setSort(node.sort());
             batch.nodes.add(entity);
         }
-        List<String> removedKeys =
-                previousSignatures.keySet().stream()
-                        .filter(key -> !seenKeys.contains(key))
+        List<PluginNodesChangedEvent.NodeChange> removed =
+                previousNodes.values().stream()
+                        .filter(row -> !seenKeys.contains(row.getNodeKey()))
+                        .map(
+                                row ->
+                                        new PluginNodesChangedEvent.NodeChange(
+                                                row.getNodeKey(),
+                                                row.getName(),
+                                                row.getNodeType(),
+                                                row.getConnectionType()))
                         .toList();
-        if (!changedKeys.isEmpty() || !removedKeys.isEmpty()) {
-            batch.nodeChanges.add(new PluginNodesChangedEvent(versionId, changedKeys, removedKeys));
+        if (!changed.isEmpty() || !removed.isEmpty()) {
+            batch.nodeChanges.add(
+                    new PluginNodesChangedEvent(
+                            versionId, pluginKey, pluginVersion, changed, removed));
             log.info(
-                    "插件节点契约发生变化: version={} changed={} removed={}",
+                    "插件节点发生变化: version={} changed={} removed={}",
                     versionId,
-                    changedKeys,
-                    removedKeys);
+                    changed.size(),
+                    removed.size());
         }
         log.info("插件节点目录已导出: version={} nodes={}", versionId, catalog.nodes().size());
     }
 
-    /** 这个版本当前登记在库里的节点签名，按 nodeKey 索引。新版本返回空表。 */
-    private Map<String, String> existingNodeSignatures(long versionId) {
-        Map<String, String> signatures = new HashMap<>();
-        List<PluginNode> rows =
-                nodeMapper.selectList(
+    /** 这个版本当前登记在库里的节点行，按 nodeKey 索引。新版本返回空表。 */
+    private Map<String, PluginNode> existingNodes(long versionId) {
+        Map<String, PluginNode> nodes = new HashMap<>();
+        nodeMapper
+                .selectList(
                         new LambdaQueryWrapper<PluginNode>()
-                                .eq(PluginNode::getPluginVersionId, versionId));
-        for (PluginNode row : rows) {
-            signatures.put(row.getNodeKey(), nz(row.getSignatureHash()));
-        }
-        return signatures;
+                                .eq(PluginNode::getPluginVersionId, versionId))
+                .forEach(row -> nodes.put(row.getNodeKey(), row));
+        return nodes;
     }
 
     /**
@@ -719,6 +769,35 @@ public class PluginSyncService {
     }
 
     private void flushBatch(SyncBatch batch) {
+        if (!batch.removedVersionIds.isEmpty()) {
+            // 被移除的版本：连同它名下的连接类型、节点、能力和依赖一起物理删除。
+            // 目录是可变镜像，库里没有的版本就是不存在，留着只会让选择器和节点目录出现幽灵项。
+            capabilityMapper.delete(
+                    new LambdaQueryWrapper<PluginCapability>()
+                            .in(PluginCapability::getPluginVersionId, batch.removedVersionIds));
+            connectionTypeMapper.delete(
+                    new LambdaQueryWrapper<PluginConnectionType>()
+                            .in(PluginConnectionType::getPluginVersionId, batch.removedVersionIds));
+            nodeMapper.delete(
+                    new LambdaQueryWrapper<PluginNode>()
+                            .in(PluginNode::getPluginVersionId, batch.removedVersionIds));
+            dependencyMapper.delete(
+                    new LambdaQueryWrapper<PluginDependency>()
+                            .in(PluginDependency::getPluginVersionId, batch.removedVersionIds));
+            versionMapper.delete(
+                    new LambdaQueryWrapper<PluginVersion>()
+                            .in(PluginVersion::getId, batch.removedVersionIds));
+            // 插件本身没有版本了才删，避免把作者刚发布的同名插件误删。
+            for (Long pluginId : batch.removedPluginIds) {
+                Long remaining =
+                        versionMapper.selectCount(
+                                new LambdaQueryWrapper<PluginVersion>()
+                                        .eq(PluginVersion::getPluginId, pluginId));
+                if (remaining == null || remaining == 0) {
+                    pluginMapper.deleteById(pluginId);
+                }
+            }
+        }
         if (!batch.replacedVersionIds.isEmpty()) {
             capabilityMapper.delete(
                     new LambdaQueryWrapper<PluginCapability>()
@@ -898,6 +977,8 @@ public class PluginSyncService {
         private final List<PluginVersion> newVersions = new ArrayList<>();
         private final List<PluginVersion> updatedVersions = new ArrayList<>();
         private final List<Long> replacedVersionIds = new ArrayList<>();
+        private final List<Long> removedVersionIds = new ArrayList<>();
+        private final List<Long> removedPluginIds = new ArrayList<>();
         private final List<PluginCapability> capabilities = new ArrayList<>();
         private final List<PluginConnectionType> connectionTypes = new ArrayList<>();
         private final List<PluginNode> nodes = new ArrayList<>();

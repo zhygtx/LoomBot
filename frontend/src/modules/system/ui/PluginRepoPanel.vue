@@ -16,8 +16,8 @@ import type { PluginRepo, PluginRepoPayload } from '../model/types'
  * 后端写/删的就是 `python/plugins/<库>/` 那套文件夹，所以这里只是"遥控器"：
  * 手工丢进去的库照样有效，两条路不打架。
  *
- * 删除库**不级联删插件** —— 插件保留、工作流侧标不可用，所以文案要说清楚，
- * 别让人以为点一下插件就没了。
+ * 删除库会清掉它的插件目录数据和绑定连接；引用过这些节点的工作流保留身份快照
+ * 并标为不可用，所以文案要说清楚。
  */
 
 const session = useSessionStore()
@@ -152,7 +152,7 @@ async function remove(repo: PluginRepo): Promise<void> {
   try {
     await systemApi.deletePluginRepo(key)
     confirmDeleteKey.value = null
-    message.success(`已删除插件库「${key}」，相关插件保留并标为不可用`)
+    message.success(`已删除插件库「${key}」，插件目录与绑定连接已清理，相关工作流已标为不可用`)
     await load()
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '插件库删除失败，请稍后重试')
@@ -300,7 +300,9 @@ onMounted(load)
 
             <div v-if="canManage" class="repo-row__actions">
               <template v-if="confirmDeleteKey === repo.key">
-                <span class="repo-row__confirm">插件会保留但标为不可用，确认删除？</span>
+                <span class="repo-row__confirm"
+                  >插件目录与绑定连接会一起清理，相关工作流会标为不可用，确认删除？</span
+                >
                 <BaseButton appearance="danger" size="small" @click="remove(repo)">
                   确认删除
                 </BaseButton>

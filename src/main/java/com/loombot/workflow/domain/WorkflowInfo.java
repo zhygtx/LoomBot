@@ -13,11 +13,27 @@ import lombok.Setter;
 @Setter
 public class WorkflowInfo {
 
+    /** 可用：节点引用都能在当前插件目录里解析出来。 */
+    public static final String AVAILABILITY_AVAILABLE = "AVAILABLE";
+
+    /** 已失效：有节点引用的插件节点被删除或契约变更，处理完保存新版本才会回到可用。 */
+    public static final String AVAILABILITY_UNAVAILABLE = "UNAVAILABLE";
+
     @TableId private Long id;
 
     private String name;
     private String description;
     private Integer enabled;
+
+    /**
+     * 系统判定的可用性，和用户开关 {@code enabled} 是两件事。
+     *
+     * <p>分开的原因：靠把 {@code enabled} 置 0 表示失效，会把"我手动关的"和"系统判不可用的" 混成同一个状态，用户既看不出区别，也没法在修好之后恢复原意。
+     */
+    private String availability;
+
+    private LocalDateTime availabilityCheckedAt;
+
     private Long currentVersionId;
     private Long ownerUserId;
     private Long createBy;

@@ -188,6 +188,7 @@ public class WorkflowService {
         // 定义没了，执行历史也留不住：明细里的节点和版本都对应不上。
         // 执行记录、大内容行、落盘文件、日汇总一起清，别留下够不到的数据。
         int executions = executionCleanup.purgeWorkflow(workflowId);
+        nodeAlertService.removeWorkflow(workflowId);
         infoMapper.deleteById(info.getId());
         log.info("工作流已删除: id={}, 一并清理执行日志 {} 条", workflowId, executions);
     }
