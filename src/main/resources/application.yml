@@ -115,8 +115,14 @@ loombot:
       navigation-ttl: 30m
 
   connection:
+    # Adapter 实际状态 → MySQL 的同步节奏（只读投影）
     runtime-sync-interval: ${CONNECTION_RUNTIME_SYNC_INTERVAL:2s}
     runtime-sync-initial-delay: ${CONNECTION_RUNTIME_SYNC_INITIAL_DELAY:3s}
+    # 期望状态 → Adapter 的重新下发节奏。
+    # 插件库热更新后 artifact 哈希会变，适配器只有再次收到 apply/reconcile 才会重启插件工作进程，
+    # 所以这里必须周期性下发；没变化的连接在适配器侧是空操作。
+    reconcile-interval: ${CONNECTION_RECONCILE_INTERVAL:30s}
+    reconcile-initial-delay: ${CONNECTION_RECONCILE_INITIAL_DELAY:15s}
 
   # 工作流：Java 只保存定义、维护触发索引并落库执行日志，引擎在 Python 运行时。
   workflow:

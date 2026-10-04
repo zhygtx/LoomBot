@@ -27,6 +27,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -49,6 +50,9 @@ public class ConnectionManager {
     private final ConnectionRuntimeSyncService runtimeSync;
     private final ObjectMapper objectMapper;
 
+    /** 上一次期望状态下发的结果；null 表示还没发过。用来把重复的失败日志压成一条。 */
+    private Boolean lastReconcileOk;
+
     public ConnectionManager(
             WsConnectionMapper mapper,
             WsConnectionRuntimeMapper runtimeMapper,
@@ -68,17 +72,51 @@ public class ConnectionManager {
     @Order(Ordered.LOWEST_PRECEDENCE)
     public void reconcileOnStart() {
         try {
-            List<AdapterConnectionCommand> desired =
-                    mapper.selectList(new LambdaQueryWrapper<WsConnection>()).stream()
-                            .map(this::command)
-                            .toList();
-            AdapterControlResult result = adapterClient.reconcile(desired);
+            AdapterControlResult result = adapterClient.reconcile(desiredCommands());
             runtimeSync.syncNow();
+            lastReconcileOk = Boolean.TRUE;
             log.info("Adapter reconcile 完成: ok={}, message={}", result.ok(), result.message());
         } catch (AdapterControlException e) {
+            lastReconcileOk = Boolean.FALSE;
             log.warn("Adapter reconcile 失败，连接状态等待监管器恢复: {}", e.getMessage());
             runtimeSync.markUnreachable();
         }
+    }
+
+    /**
+     * 周期重新下发期望状态。
+     *
+     * <p>插件库是热更新的：同一个版本目录被覆盖后 {@code artifact_sha256} 会变，而适配器侧只在收到 apply/reconcile
+     * 时才会比较这个哈希、发现"制品变了"并重启插件工作进程。只在启动时下发一次的话， 插件更新要等到下一次重启才生效 ——
+     * 这中间工作进程一直跑旧代码，表现就是"我明明改了插件，怎么没反应"。
+     *
+     * <p>适配器侧对没变化的连接是空操作（revision/config 都没变就直接返回），所以周期下发不产生额外动作， 顺带还能在适配器重启后自愈。
+     */
+    @Scheduled(
+            fixedDelayString = "${loombot.connection.reconcile-interval:30s}",
+            initialDelayString = "${loombot.connection.reconcile-initial-delay:15s}")
+    public void scheduledReconcile() {
+        try {
+            adapterClient.reconcile(desiredCommands());
+            if (Boolean.FALSE.equals(lastReconcileOk)) {
+                log.info("Adapter 期望状态已恢复下发");
+            }
+            lastReconcileOk = Boolean.TRUE;
+        } catch (AdapterControlException e) {
+            // 适配器还没起来是启动期的常态，只在"从好变坏"时提醒一次，避免每 30 秒刷一条 WARN
+            if (lastReconcileOk == null || lastReconcileOk) {
+                log.warn("Adapter 期望状态下发失败: {}", e.getMessage());
+            } else {
+                log.debug("Adapter 期望状态下发仍失败: {}", e.getMessage());
+            }
+            lastReconcileOk = Boolean.FALSE;
+        }
+    }
+
+    private List<AdapterConnectionCommand> desiredCommands() {
+        return mapper.selectList(new LambdaQueryWrapper<WsConnection>()).stream()
+                .map(this::command)
+                .toList();
     }
 
     public void start(long connectionId) {
