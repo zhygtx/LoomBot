@@ -20,7 +20,7 @@
 
         <mybatis-plus.version>3.5.17</mybatis-plus.version>
         <jjwt.version>0.13.0</jjwt.version>
-        <tomlj.version>1.1.1</tomlj.version>
+        <tomlj.version>2.2.0</tomlj.version>
 
         <!-- 工程约束工具版本 -->
         <spotless.version>3.10.2</spotless.version>
