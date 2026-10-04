@@ -158,6 +158,8 @@ export interface WorkflowTraceNode {
   output?: unknown
   runtimeFields?: Array<Record<string, unknown>>
   error?: string | null
+  /** 分类错误码，例如 ACTION_TIMEOUT / RATE_LIMITED；和 error 一起看才有排查价值。 */
+  errorCode?: string | null
   /** false 表示这次调用只确认"发出去了"，没拿到结果（例如平台没回响应）。 */
   resultKnown?: boolean
 }

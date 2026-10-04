@@ -200,7 +200,13 @@ async def action(connection_id: int, request: Request, x_adapter_token: str | No
             ),
         }
     except Exception as exc:
-        return {"status": "FAILED", "errorCode": "ACTION_FAILED", "errorMessage": str(exc)}
+        # 保留插件给出的分类。这里如果一律压成 ACTION_FAILED，
+        # 上层就再也分不出「平台限流」「鉴权失败」和「插件自己崩了」。
+        return {
+            "status": "FAILED",
+            "errorCode": str(getattr(exc, "code", "") or "ACTION_FAILED"),
+            "errorMessage": str(exc),
+        }
 
 
 # 同一个未知端点 5 分钟内只告警一次，避免失联的客户端把日志刷满。

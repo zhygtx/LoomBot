@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -18,6 +19,26 @@ log = logging.getLogger("adapter-supervisor")
 # 动作调用的 IPC 等待上限（秒）。必须比 worker 的动作超时更长，见 worker_runtime
 # 里那条超时阶梯：插件 echo 30s < worker 35s < 本值 45s < executor 55s < 前端 90s。
 INVOKE_TIMEOUT_SECONDS = 45.0
+
+# worker 的 stderr 行首带自己的时间戳和级别（logging.basicConfig 的格式），
+# 用它把 ERROR/CRITICAL 原样透传成宿主的 ERROR，堆栈才不会被记成 INFO。
+_WORKER_ERROR_LEVEL = re.compile(
+    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[,.]\d{3} (?:ERROR|CRITICAL) "
+)
+
+class WorkerCommandError(RuntimeError):
+    """插件工作进程回了一个失败包。
+
+    带上 ``code`` 是为了别在跨进程这一跳把分类丢掉：插件已经算出来的
+    ``RATE_LIMITED`` / ``AUTH_REJECTED`` 如果在这里被压成一句消息，
+    到了执行日志里就只剩「ACTION_FAILED」，调用方再也没法按类型处理。
+    """
+
+    def __init__(self, message: str, *, code: str = "ACTION_FAILED", error_type: str = "") -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.error_type = error_type
 
 
 def _needs_restart(current: DesiredConnection, desired: DesiredConnection) -> bool:
@@ -132,7 +153,13 @@ class WorkerHandle:
                             if value.get("ok", False):
                                 future.set_result(value)
                             else:
-                                future.set_exception(RuntimeError(value.get("errorMessage", "工作进程命令失败")))
+                                future.set_exception(
+                                    WorkerCommandError(
+                                        str(value.get("errorMessage") or "工作进程命令失败"),
+                                        code=str(value.get("errorCode") or "ACTION_FAILED"),
+                                        error_type=str(value.get("errorType") or ""),
+                                    )
+                                )
                     elif kind == "observation":
                         self.observations[int(value["connectionId"])] = value
                     elif kind in {"event", "session.send", "session.close"}:
@@ -148,7 +175,15 @@ class WorkerHandle:
     async def _stderr_loop(self) -> None:
         assert self.process and self.process.stderr
         async for line in self.process.stderr:
-            log.info("[worker:%s] %s", self.desired.plugin_key, line.decode(errors="replace").rstrip())
+            text = line.decode(errors="replace").rstrip()
+            if not text:
+                continue
+            # worker 自己带 `%(asctime)s %(levelname)s ...` 前缀。原样按 INFO 转发会把
+            # 插件抛异常的堆栈一起记成 INFO，按级别过滤日志时就看不见了。
+            if _WORKER_ERROR_LEVEL.search(text):
+                log.error("[worker:%s] %s", self.desired.plugin_key, text)
+            else:
+                log.info("[worker:%s] %s", self.desired.plugin_key, text)
 
 
 class AdapterSupervisor:

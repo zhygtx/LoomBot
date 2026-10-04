@@ -370,6 +370,7 @@ class WorkflowEngine:
             "output": None,
             "runtimeFields": [],
             "error": None,
+            "errorCode": None,
         }
         outcome.traces.append(trace)
         try:
@@ -441,6 +442,7 @@ class WorkflowEngine:
             trace["status"] = "TIMEOUT" if action_timeout else "FAILED"
             trace["endTime"] = now_ms()
             trace["error"] = exc.message
+            trace["errorCode"] = exc.code
             if action_timeout:
                 trace["resultKnown"] = False
                 outcome.result_known = False
@@ -449,6 +451,7 @@ class WorkflowEngine:
             trace["status"] = "FAILED"
             trace["endTime"] = now_ms()
             trace["error"] = str(exc)
+            trace["errorCode"] = "NODE_FAILED"
             raise NodeError(f"节点 {trace['name']} 执行失败：{exc}") from exc
 
     def _resolve_action_params(

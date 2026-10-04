@@ -57,7 +57,12 @@ function nodeDuration(node: WorkflowTraceNode): string {
             <dd>v{{ summary.definitionVersion ?? '—' }} · 耗时 {{ formatDuration(summary.durationMs) }}</dd>
           </div>
         </dl>
-        <p v-if="summary.errorMessage" class="inline-detail__error">{{ summary.errorMessage }}</p>
+        <p v-if="summary.errorMessage" class="inline-detail__error">
+          {{ summary.errorMessage }}
+          <span v-if="summary.errorCode" class="inline-detail__error-code">
+            {{ summary.errorCode }}
+          </span>
+        </p>
       </section>
 
       <section class="inline-detail__section">
@@ -80,7 +85,12 @@ function nodeDuration(node: WorkflowTraceNode): string {
               </header>
               <div class="inline-detail__node-body">
                 <WorkflowValueViewer :execution-id="summary.executionId" :value="node.output" />
-                <p v-if="node.error" class="inline-detail__error">{{ node.error }}</p>
+                <p v-if="node.error" class="inline-detail__error">
+                  {{ node.error }}
+                  <span v-if="node.errorCode" class="inline-detail__error-code">
+                    {{ node.errorCode }}
+                  </span>
+                </p>
                 <details :open="isNodeOpen(index)">
                   <summary @click.prevent="toggleNode(index)">输入</summary>
                   <WorkflowValueViewer :execution-id="summary.executionId" :value="node.input" />
@@ -139,6 +149,15 @@ function nodeDuration(node: WorkflowTraceNode): string {
   margin: 0;
   color: var(--sys-color-danger-text);
   font: var(--sys-typography-caption);
+}
+
+/* 分类错误码跟在消息后面：消息是给人看的，错误码是给排查用的 */
+.inline-detail__error-code {
+  margin-inline-start: 0.35rem;
+  color: var(--sys-color-text-muted);
+  font-family: var(--ref-font-mono, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0;
 }
 
 .inline-detail__state {

@@ -108,19 +108,35 @@ class Worker:
     async def _invoke_and_reply(self, request_id: str | None, command: dict[str, Any]) -> None:
         """后台执行动作并回包，保证命令循环能继续读 `session.frame`。"""
         assert self.runtime is not None
+        action = str(command.get("action") or "")
         try:
             result = await self.runtime.invoke(
-                int(command["connectionId"]), str(command["action"]), dict(command.get("params") or {})
+                int(command["connectionId"]), action, dict(command.get("params") or {})
             )
         except Exception as exc:  # noqa: BLE001 - 失败也必须回包，否则调用方只能等到超时
+            # 回给调用方的只有一行消息，真正的定位信息（哪一行、哪个依赖抛的）只有这里能留下。
+            # 不打这一行，插件动作的堆栈就彻底丢了。
+            log.exception(
+                "插件动作执行失败: connection=%s action=%s",
+                command.get("connectionId"),
+                action,
+            )
             message_text = str(exc).strip() or type(exc).__name__
+            error_type = type(exc).__name__
+            # 平台/依赖只给了消息时把异常类型带上：光看「系统繁忙，请稍后重试」分不出
+            # 是平台返回的、还是插件自己抛的。
+            if error_type and error_type not in message_text:
+                message_text = f"{message_text}（{error_type}）"
             await self.send(
                 message(
                     "reply",
                     request_id=request_id,
                     ok=False,
-                    errorCode="ACTION_FAILED",
+                    # 插件自己带了分类（WorkflowError.code 之类）就用它，
+                    # 否则才是兜底的 ACTION_FAILED。
+                    errorCode=str(getattr(exc, "code", "") or "ACTION_FAILED"),
                     errorMessage=message_text,
+                    errorType=error_type,
                 )
             )
             return

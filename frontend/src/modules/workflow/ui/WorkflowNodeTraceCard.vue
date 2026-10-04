@@ -88,7 +88,10 @@ const durationText = computed(() => {
         />
       </section>
 
-      <p v-if="trace.error" class="trace-card__error">{{ trace.error }}</p>
+      <p v-if="trace.error" class="trace-card__error">
+        {{ trace.error }}
+        <span v-if="trace.errorCode" class="trace-card__error-code">{{ trace.errorCode }}</span>
+      </p>
 
       <details v-if="inputCollapsed" class="trace-card__input">
         <summary>输入</summary>
@@ -205,6 +208,15 @@ const durationText = computed(() => {
   color: var(--sys-color-danger-text);
   font: var(--sys-typography-caption);
   overflow-wrap: anywhere;
+}
+
+/* 分类错误码跟在消息后面：消息是给人看的，错误码是给排查用的 */
+.trace-card__error-code {
+  margin-inline-start: 0.35rem;
+  color: var(--sys-color-text-muted);
+  font-family: var(--ref-font-mono, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0;
 }
 
 .trace-card__input summary {
