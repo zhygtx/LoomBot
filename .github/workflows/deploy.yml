@@ -1,9 +1,7 @@
 name: Deploy
 
 on:
-  # 暂时只保留手动触发：GitHub 托管 runner 在美国，直连北京服务器上传 54MB 产物
-  # 实测只有 26 KB/s，要 35 分钟。等接入 Cloudflare R2 中转（服务器下载实测 5.8 MB/s）
-  # 并手动跑通一次后，再恢复 push 到 main 自动部署。
+  # 暂时只保留手动触发。R2 中转已接好，手动跑通一次后再恢复 push 到 main 自动部署。
   workflow_dispatch:
 
 # 部署串行执行；不取消正在进行的部署，避免 release 切到一半被打断。
@@ -100,11 +98,31 @@ jobs:
           printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-      - name: 上传产物到服务器
+      # 不再从美国 runner 直推产物：实测只有 26 KB/s，54MB 要 35 分钟。
+      # 先传到 R2，服务器再从 Cloudflare CDN 下载，实测 5.8 MB/s。
+      - name: 上传产物到 R2 并生成临时下载链接
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          # 新版 AWS CLI 默认附带 CRC32 校验头，R2 不识别，必须降级为按需计算。
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          KEY="${{ github.sha }}"
+          aws s3 cp artifacts/backend/backend.tar.gz "s3://$R2_BUCKET/$KEY/backend.tar.gz" --endpoint-url "$R2_ENDPOINT"
+          aws s3 cp artifacts/frontend/frontend.tar.gz "s3://$R2_BUCKET/$KEY/frontend.tar.gz" --endpoint-url "$R2_ENDPOINT"
+          aws s3 presign "s3://$R2_BUCKET/$KEY/backend.tar.gz" --expires-in 3600 --endpoint-url "$R2_ENDPOINT" > /tmp/backend.url
+          aws s3 presign "s3://$R2_BUCKET/$KEY/frontend.tar.gz" --expires-in 3600 --endpoint-url "$R2_ENDPOINT" > /tmp/frontend.url
+          echo "已上传 R2: $KEY"
+
+      - name: 上传下载链接清单
         run: |
           scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
             -P "${{ secrets.SSH_PORT || '22' }}" \
-            artifacts/backend/backend.tar.gz artifacts/frontend/frontend.tar.gz \
+            /tmp/backend.url /tmp/frontend.url \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/tmp/"
 
       - name: 远端切换并验活
@@ -113,6 +131,10 @@ jobs:
             -p "${{ secrets.SSH_PORT || '22' }}" \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" 'bash -s' <<'REMOTE'
           set -euo pipefail
+
+          # 产物从 R2 下载，走 Cloudflare CDN；链接是一小时有效的预签名 URL，桶本身不公开。
+          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/backend.tar.gz "$(cat /tmp/backend.url)"
+          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/frontend.tar.gz "$(cat /tmp/frontend.url)"
 
           APP_DIR=/opt/loombot
           TS=$(date +%Y%m%d%H%M%S)
@@ -159,3 +181,16 @@ jobs:
           rm -f /tmp/backend.tar.gz /tmp/frontend.tar.gz
           echo "部署完成: $REL"
           REMOTE
+
+      # 部署成功后清掉本次产物，避免 R2 里越堆越多；失败时保留，方便排查。
+      - name: 清理 R2 上的本次产物
+        if: success()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: aws s3 rm "s3://$R2_BUCKET/${{ github.sha }}/" --recursive --endpoint-url "$R2_ENDPOINT"
