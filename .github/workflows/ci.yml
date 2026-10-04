@@ -38,3 +38,30 @@ jobs:
       # 注意用 clean：不清理的话 target 里的旧产物会参与打包判断。
       - name: 格式校验 + 编译打包
         run: mvn -B clean verify
+
+  frontend:
+    name: 前端 · 类型检查与构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # package.json 的 engines 要求 Node >= 24，这里必须对齐，否则 vue-tsc / vite 8 跑不起来。
+      - name: 安装 Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      # build 脚本本身就是 vue-tsc -b && vite build，同时覆盖类型检查。
+      - name: 类型检查 + 构建
+        run: npm run build
