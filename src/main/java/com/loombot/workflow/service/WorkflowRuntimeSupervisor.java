@@ -1,6 +1,7 @@
 package com.loombot.workflow.service;
 
 import com.loombot.config.AdapterProperties;
+import com.loombot.plugin.storage.PluginStorageProperties;
 import com.loombot.workflow.WorkflowRuntimeProperties;
 import com.loombot.workflow.WorkflowWorkerProperties;
 import jakarta.annotation.PreDestroy;
@@ -32,16 +33,19 @@ public class WorkflowRuntimeSupervisor {
     private final AdapterProperties adapterProperties;
     private final WorkflowWorkerProperties workerProperties;
     private final WorkflowRuntimeProperties runtimeProperties;
+    private final PluginStorageProperties pluginStorageProperties;
     private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
     private volatile Process process;
 
     public WorkflowRuntimeSupervisor(
             AdapterProperties adapterProperties,
             WorkflowWorkerProperties workerProperties,
-            WorkflowRuntimeProperties runtimeProperties) {
+            WorkflowRuntimeProperties runtimeProperties,
+            PluginStorageProperties pluginStorageProperties) {
         this.adapterProperties = adapterProperties;
         this.workerProperties = workerProperties;
         this.runtimeProperties = runtimeProperties;
+        this.pluginStorageProperties = pluginStorageProperties;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -86,6 +90,12 @@ public class WorkflowRuntimeSupervisor {
         // 大内容落盘目录：运行时按这个绝对路径写，Java 读同一目录提供下载
         builder.environment()
                 .put("WORKFLOW_ARTIFACT_DIR", runtimeProperties.artifactsRoot().toString());
+        // 插件持久化：运行时不直连 MySQL/Redis/对象存储，只回调 Java 的内部接口。
+        // 节点进程从这里继承环境变量，所以插件侧不需要额外配置。
+        builder.environment()
+                .put("PLUGIN_STORAGE_BASE_URL", pluginStorageProperties.internalBaseUrl());
+        builder.environment()
+                .put("PLUGIN_STORAGE_CONTROL_TOKEN", pluginStorageProperties.controlToken());
         URI testEndpoint = URI.create(workerProperties.testBaseUrl());
         if (testEndpoint.getHost() != null) {
             builder.environment().put("WORKFLOW_TEST_HOST", testEndpoint.getHost());

@@ -1,6 +1,7 @@
 package com.loombot.adapter;
 
 import com.loombot.config.AdapterProperties;
+import com.loombot.plugin.storage.PluginStorageProperties;
 import jakarta.annotation.PreDestroy;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -37,6 +38,7 @@ public class AdapterProcessSupervisor {
 
     private final AdapterProperties properties;
     private final AdapterControlClient client;
+    private final PluginStorageProperties pluginStorageProperties;
     private final ScheduledExecutorService scheduler;
     private final AtomicBoolean restartScheduled = new AtomicBoolean();
 
@@ -44,9 +46,13 @@ public class AdapterProcessSupervisor {
     private volatile boolean shuttingDown;
     private volatile int restartAttempt;
 
-    public AdapterProcessSupervisor(AdapterProperties properties, AdapterControlClient client) {
+    public AdapterProcessSupervisor(
+            AdapterProperties properties,
+            AdapterControlClient client,
+            PluginStorageProperties pluginStorageProperties) {
         this.properties = properties;
         this.client = client;
+        this.pluginStorageProperties = pluginStorageProperties;
         this.scheduler =
                 Executors.newSingleThreadScheduledExecutor(
                         runnable -> {
@@ -120,6 +126,9 @@ public class AdapterProcessSupervisor {
         environment.put("ADAPTER_CONTROL_TOKEN", properties.controlToken());
         environment.put("ADAPTER_PLUGIN_ROOT", properties.pluginRoot());
         environment.put("ADAPTER_REDIS_URL", properties.redisUrl());
+        // 适配器插件用 conn.storage 时同样只回调 Java，不直接连数据库或对象存储。
+        environment.put("PLUGIN_STORAGE_BASE_URL", pluginStorageProperties.internalBaseUrl());
+        environment.put("PLUGIN_STORAGE_CONTROL_TOKEN", pluginStorageProperties.controlToken());
         environment.put("ADAPTER_WS_HOST", control.getHost());
         environment.put(
                 "ADAPTER_WS_PORT",

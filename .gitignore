@@ -56,6 +56,11 @@ __pycache__/
 /python/plugins/
 /python/logs/
 /python/artifacts/
+# 插件持久化：本机后端的数据目录与对象存储的本地实现目录。都是运行期数据，不进版本库。
+/python/plugin-data/
+/plugin-data/
+/plugin-objects/
+/python/plugin-objects/
 # 插件库机器人的本地密钥（Gitee token、AI key）与运行状态：不进版本库
 /python/secrets/
 /python/_work/

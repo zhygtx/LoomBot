@@ -186,6 +186,26 @@ loombot:
     command-timeout-seconds: ${PLUGIN_GIT_TIMEOUT_SECONDS:60}
     dependency-install-timeout-seconds: ${PLUGIN_DEPENDENCY_TIMEOUT_SECONDS:600}
 
+  # 插件持久化：结构化状态与文件元数据在 MySQL，文件内容走对象存储，
+  # 跨进程锁在 Redis。参数类见 com.loombot.plugin.storage.PluginStorageProperties。
+  #
+  # 这里的三项都是"宿主内部约定"，插件看不到：插件只调用 ctx.storage，
+  # 由 Python 运行时把请求转发到 internal-base-url。
+  #
+  # object-root 现在是本地目录实现的落地位置。接 R2/S3 时替换 ObjectStorage 实现即可，
+  # 表结构和插件 API 都不动 —— 所以它配的是"后端参数"而不是写死的路径。
+  plugin-storage:
+    # 内部接口令牌。漏配的默认值只够本机开发，生产必须在 EnvironmentFile 里覆盖。
+    control-token: ${PLUGIN_STORAGE_CONTROL_TOKEN:loombot-dev-plugin-storage-token}
+    # Python 运行时回调 Java 的地址；与 server.port 保持一致
+    internal-base-url: ${PLUGIN_STORAGE_BASE_URL:http://127.0.0.1:8080/internal/plugin-storage}
+    # 对象存储根目录；生产建议 /opt/loombot/shared/plugin-objects
+    object-root: ${PLUGIN_OBJECT_ROOT:python/plugin-objects}
+    # 单个文件上限（字节）。超过直接拒绝，不写对象存储也不写元数据
+    max-file-bytes: ${PLUGIN_STORAGE_MAX_FILE_BYTES:33554432}
+    # 过期状态的定时清理间隔；过期行在读取时已不可见，这里只是不让垃圾堆积
+    purge-interval: ${PLUGIN_STORAGE_PURGE_INTERVAL:10m}
+
   notify:
     # 仅本机开发可打开（dev profile 覆盖为 true）。生产漏配 SMTP 时必须启动失败，不能把验证码写入日志。
     allow-logging-mail: false
