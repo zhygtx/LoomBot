@@ -1,11 +1,14 @@
 name: Deploy
 
+# 发布是 pull 模式：CI 只负责构建并把产物和发布指针传到 R2，
+# 服务器上的 systemd timer 每分钟读一次指针，发现新 sha 才自行部署。
+# 整条链路上没有任何外部机器登录服务器，所以 GitHub 里不需要保存 SSH 私钥。
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-# 部署串行执行；不取消正在进行的部署，避免 release 切到一半被打断。
 concurrency:
   group: deploy-production
   cancel-in-progress: false
@@ -79,13 +82,23 @@ jobs:
           path: frontend.tar.gz
           retention-days: 3
 
-  deploy:
-    name: 部署到服务器
+  publish:
+    name: 发布到 R2
     needs: [backend, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # 之后可以在 GitHub 的 environment 里加「需要人工批准」再发布。
+    # 需要人工审批时在 GitHub 的 environment 里加保护规则；批准后才会写指针，服务器才部署。
     environment: production
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # 新版 AWS CLI 默认附带 CRC32 校验头，R2 不识别，必须降级为按需计算。
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
 
     steps:
       - name: 下载产物
@@ -93,105 +106,30 @@ jobs:
         with:
           path: artifacts
 
-      - name: 配置 SSH 私钥
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-
-      # 不再从美国 runner 直推产物：实测只有 26 KB/s，54MB 要 35 分钟。
-      # 先传到 R2，服务器再从 Cloudflare CDN 下载，实测 5.8 MB/s。
-      - name: 上传产物到 R2 并生成临时下载链接
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          # 新版 AWS CLI 默认附带 CRC32 校验头，R2 不识别，必须降级为按需计算。
-          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      - name: 上传产物并更新发布指针
         run: |
           KEY="${{ github.sha }}"
-          aws s3 cp artifacts/backend/backend.tar.gz "s3://$R2_BUCKET/$KEY/backend.tar.gz" --endpoint-url "$R2_ENDPOINT"
-          aws s3 cp artifacts/frontend/frontend.tar.gz "s3://$R2_BUCKET/$KEY/frontend.tar.gz" --endpoint-url "$R2_ENDPOINT"
-          aws s3 presign "s3://$R2_BUCKET/$KEY/backend.tar.gz" --expires-in 3600 --endpoint-url "$R2_ENDPOINT" > /tmp/backend.url
-          aws s3 presign "s3://$R2_BUCKET/$KEY/frontend.tar.gz" --expires-in 3600 --endpoint-url "$R2_ENDPOINT" > /tmp/frontend.url
-          echo "已上传 R2: $KEY"
+          aws s3 cp artifacts/backend/backend.tar.gz "s3://$R2_BUCKET/releases/$KEY/backend.tar.gz" --endpoint-url "$R2_ENDPOINT"
+          aws s3 cp artifacts/frontend/frontend.tar.gz "s3://$R2_BUCKET/releases/$KEY/frontend.tar.gz" --endpoint-url "$R2_ENDPOINT"
 
-      - name: 上传下载链接清单
+          # 指针最后写：服务器读到指针时，两个产物一定已经就位。
+          printf '{"sha":"%s","createdAt":"%s"}\n' "$KEY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/current.json
+          aws s3 cp /tmp/current.json "s3://$R2_BUCKET/current.json" --endpoint-url "$R2_ENDPOINT" --content-type application/json
+
+          echo "已发布 $KEY，服务器会在一分钟内自行拉取部署"
+
+      # pull 模式下 CI 不知道服务器何时部署完，所以按版本数清理，而不是部署后即删。
+      - name: 清理旧发布包
         run: |
-          scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
-            -P "${{ secrets.SSH_PORT || '22' }}" \
-            /tmp/backend.url /tmp/frontend.url \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/tmp/"
-
-      - name: 远端切换并验活
-        run: |
-          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
-            -p "${{ secrets.SSH_PORT || '22' }}" \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" 'bash -s' <<'REMOTE'
-          set -euo pipefail
-
-          # 产物从 R2 下载，走 Cloudflare CDN；链接是一小时有效的预签名 URL，桶本身不公开。
-          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/backend.tar.gz "$(cat /tmp/backend.url)"
-          curl -fsSL --retry 3 --retry-delay 2 -o /tmp/frontend.tar.gz "$(cat /tmp/frontend.url)"
-
-          APP_DIR=/opt/loombot
-          TS=$(date +%Y%m%d%H%M%S)
-          REL="$APP_DIR/releases/$TS"
-          PREV=$(sudo readlink -f "$APP_DIR/current" || true)
-
-          # 新版本先落到独立目录，失败时旧版本仍在，天然可回滚。
-          sudo mkdir -p "$REL"
-          sudo tar -xzf /tmp/backend.tar.gz -C "$REL"
-          sudo mkdir -p "$REL/frontend"
-          sudo tar -xzf /tmp/frontend.tar.gz -C "$REL/frontend"
-          sudo ln -sfn "$APP_DIR/logs" "$REL/logs"
-          sudo chown -R loombot:loombot "$REL"
-
-          sudo ln -sfn "$REL" "$APP_DIR/current"
-          sudo systemctl restart loombot
-
-          # 健康检查失败就切回上一个 release，避免把坏版本留在线上。
-          ok=0
-          for _ in $(seq 1 40); do
-            if curl -fsS -m 5 http://127.0.0.1:8080/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then
-              ok=1
-              break
-            fi
-            sleep 3
-          done
-
-          if [ "$ok" != "1" ]; then
-            echo "健康检查失败，回滚到 $PREV"
-            if [ -n "$PREV" ]; then
-              sudo ln -sfn "$PREV" "$APP_DIR/current"
-              sudo systemctl restart loombot
-            fi
-            exit 1
-          fi
-
-          sudo nginx -t
-          sudo systemctl reload nginx
-
-          # 只保留最近 5 个 release，避免磁盘被历史版本撑满。
-          # /opt/loombot 权限是 750，普通用户进不去，整段必须在 root 下执行。
-          sudo bash -c 'cd /opt/loombot/releases && ls -1dt */ 2>/dev/null | tail -n +6 | xargs -r rm -rf --'
-
-          rm -f /tmp/backend.tar.gz /tmp/frontend.tar.gz
-          echo "部署完成: $REL"
-          REMOTE
-
-      # 部署成功后清掉本次产物，避免 R2 里越堆越多；失败时保留，方便排查。
-      - name: 清理 R2 上的本次产物
-        if: success()
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: aws s3 rm "s3://$R2_BUCKET/${{ github.sha }}/" --recursive --endpoint-url "$R2_ENDPOINT"
+          KEY="${{ github.sha }}"
+          aws s3 ls "s3://$R2_BUCKET/releases/" --recursive --endpoint-url "$R2_ENDPOINT" \
+            | awk '{split($4,a,"/"); print $1"T"$2, a[2]}' \
+            | sort -r \
+            | awk '!seen[$2]++ {print $2}' \
+            | tail -n +4 \
+            | while read -r old; do
+                [ -z "$old" ] && continue
+                [ "$old" = "$KEY" ] && continue
+                echo "清理旧发布包 $old"
+                aws s3 rm "s3://$R2_BUCKET/releases/$old/" --recursive --endpoint-url "$R2_ENDPOINT"
+              done

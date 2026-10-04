@@ -1,0 +1,10 @@
+[Unit]
+Description=Check R2 for a new LoomBot release every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
