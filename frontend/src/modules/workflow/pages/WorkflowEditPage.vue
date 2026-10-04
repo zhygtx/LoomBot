@@ -503,6 +503,10 @@ const handleCanvasPointerDown = (event: PointerEvent): void => {
   configNodeId.value = null
 
   if (mode.value === 'drag' || (event.pointerType === 'mouse' && event.button === 1)) {
+    // 阻止 pointerdown 的默认行为，浏览器才不会顺手发起一次文本选择。
+    // 不这么做的话，从空白处起拖会选中指针扫过的节点文本，拖得远一点就是整页全选。
+    // 只拦主键和中键：右键要留给画布右键菜单。
+    if (event.button === 0 || event.button === 1) event.preventDefault()
     panning.value = {
       pointerId: event.pointerId,
       clientX: event.clientX,
@@ -518,6 +522,8 @@ const handleCanvasPointerDown = (event: PointerEvent): void => {
     (event.pointerType !== 'mouse' || event.button === 0) &&
     canvasRef.value
   ) {
+    // 同上：框选是画布自己的选择行为，不该同时触发浏览器的文本选择
+    event.preventDefault()
     const rect = canvasRef.value.getBoundingClientRect()
     const x = (event.clientX - rect.left - canvas.offsetX) / canvas.scale
     const y = (event.clientY - rect.top - canvas.offsetY) / canvas.scale
@@ -1573,6 +1579,11 @@ onBeforeUnmount(() => {
   position: absolute;
   z-index: 15;
   inline-size: 15.625rem;
+  /* 和节点卡片一样不参与文本选择：否则在历史模式下拖画布会把这层预览里的 JSON 选蓝，
+     拖得远一点还会顺着延伸到整页。要看要复制的内容点「点击查看」，
+     那个弹窗 teleport 到 body，不受这里影响。 */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .workflow-world {
