@@ -55,9 +55,17 @@ REL="$APP_DIR/releases/$TS-$SHORT"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-if ! rclone --config "$RCLONE_CONF" copyto "$BUCKET/releases/$SHA/backend.tar.gz" "$TMP/backend.tar.gz" ||
-    ! rclone --config "$RCLONE_CONF" copyto "$BUCKET/releases/$SHA/frontend.tar.gz" "$TMP/frontend.tar.gz"; then
-    log "下载产物失败: $SHA"
+# 到 R2 的跨境链路速度波动很大（见过 1MB/s，也见过 80KB/s），所以开并行分片；
+# 再加超时，避免一次卡死的下载把后面的定时任务全堵住。
+RCLONE=(rclone --config "$RCLONE_CONF"
+    --multi-thread-streams 4
+    --multi-thread-cutoff 8M
+    --retries 3
+    --low-level-retries 10)
+
+if ! timeout 900 "${RCLONE[@]}" copyto "$BUCKET/releases/$SHA/backend.tar.gz" "$TMP/backend.tar.gz" ||
+    ! timeout 300 "${RCLONE[@]}" copyto "$BUCKET/releases/$SHA/frontend.tar.gz" "$TMP/frontend.tar.gz"; then
+    log "下载产物失败或超时: $SHA"
     exit 1
 fi
 
