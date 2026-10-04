@@ -1,0 +1,160 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 部署串行执行；不取消正在进行的部署，避免 release 切到一半被打断。
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  backend:
+    name: 构建后端
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: 格式校验 + 编译打包
+        run: mvn -B clean verify
+
+      - name: 打包后端产物
+        run: |
+          mkdir -p staging/python
+          cp target/loombot.jar staging/
+          cp -r python/system staging/python/system
+          cp python/loombot_adapter.py python/loombot_node.py staging/python/
+          tar -czf backend.tar.gz -C staging .
+
+      - name: 上传后端产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend
+          path: backend.tar.gz
+          retention-days: 3
+
+  frontend:
+    name: 构建前端
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      # package.json 的 engines 要求 Node >= 24，必须对齐。
+      - name: 安装 Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖并构建
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 打包前端产物
+        working-directory: frontend
+        run: tar -czf ../frontend.tar.gz -C dist .
+
+      - name: 上传前端产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend
+          path: frontend.tar.gz
+          retention-days: 3
+
+  deploy:
+    name: 部署到服务器
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 之后可以在 GitHub 的 environment 里加「需要人工批准」再发布。
+    environment: production
+
+    steps:
+      - name: 下载产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 配置 SSH 私钥
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: 上传产物到服务器
+        run: |
+          scp -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            -P "${{ secrets.SSH_PORT || '22' }}" \
+            artifacts/backend/backend.tar.gz artifacts/frontend/frontend.tar.gz \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/tmp/"
+
+      - name: 远端切换并验活
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key \
+            -p "${{ secrets.SSH_PORT || '22' }}" \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          APP_DIR=/opt/loombot
+          TS=$(date +%Y%m%d%H%M%S)
+          REL="$APP_DIR/releases/$TS"
+          PREV=$(sudo readlink -f "$APP_DIR/current" || true)
+
+          # 新版本先落到独立目录，失败时旧版本仍在，天然可回滚。
+          sudo mkdir -p "$REL"
+          sudo tar -xzf /tmp/backend.tar.gz -C "$REL"
+          sudo mkdir -p "$REL/frontend"
+          sudo tar -xzf /tmp/frontend.tar.gz -C "$REL/frontend"
+          sudo ln -sfn "$APP_DIR/logs" "$REL/logs"
+          sudo chown -R loombot:loombot "$REL"
+
+          sudo ln -sfn "$REL" "$APP_DIR/current"
+          sudo systemctl restart loombot
+
+          # 健康检查失败就切回上一个 release，避免把坏版本留在线上。
+          ok=0
+          for _ in $(seq 1 40); do
+            if curl -fsS -m 5 http://127.0.0.1:8080/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then
+              ok=1
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$ok" != "1" ]; then
+            echo "健康检查失败，回滚到 $PREV"
+            if [ -n "$PREV" ]; then
+              sudo ln -sfn "$PREV" "$APP_DIR/current"
+              sudo systemctl restart loombot
+            fi
+            exit 1
+          fi
+
+          sudo nginx -t
+          sudo systemctl reload nginx
+
+          # 只保留最近 5 个 release，避免磁盘被历史版本撑满。
+          cd "$APP_DIR/releases"
+          ls -1dt */ 2>/dev/null | tail -n +6 | xargs -r sudo rm -rf --
+
+          rm -f /tmp/backend.tar.gz /tmp/frontend.tar.gz
+          echo "部署完成: $REL"
+          REMOTE
