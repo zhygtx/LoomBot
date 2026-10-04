@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from datetime import date, datetime
 from pathlib import Path
 
@@ -61,6 +62,7 @@ from system.plugin_market.gates import (
 )
 from system.plugin_market.gitee import GiteeClient, GiteeError
 from system.plugin_market.gitee import authenticated_url, parse_repo_url
+from system.plugin_market.loombot_publish import version_sort_key
 
 # demo/python —— 跑 `-m system.plugin_market.loombot_publish` 时的 cwd
 PY_ROOT = Path(__file__).resolve().parents[2]
@@ -241,6 +243,34 @@ def next_version(root: Path, author: str, key: str) -> str:
     except ValueError:
         patch = 1
     return f"{parts[0]}.{parts[1]}.{patch}"
+
+
+def previous_manifest(root: Path, author: str, key: str) -> tuple[str, str] | None:
+    """读这个插件最新已发布版本的 plugin.toml，取出 (name, description)。
+
+    同名插件已经发过版本、作者又没写 plugin.toml 时，机器人沿用上一次的名称和描述，
+    不每次重新推断——同一个插件不同版本的描述来回漂移比"不够新"更让人困惑。
+    """
+    published = root / "plugins" / author / key
+    if not published.is_dir():
+        return None
+    versions = sorted(
+        (path for path in published.iterdir() if path.is_dir()),
+        key=lambda path: version_sort_key(path.name),
+    )
+    if not versions:
+        return None
+    manifest = versions[-1] / "plugin.toml"
+    if not manifest.is_file():
+        return None
+    try:
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, OSError):
+        return None
+    plugin = data.get("plugin") if isinstance(data, dict) else None
+    if not isinstance(plugin, dict):
+        return None
+    return str(plugin.get("name") or "").strip(), str(plugin.get("description") or "").strip()
 
 
 def normalize_layout(plugin_dir: Path, sources_root: Path, account: str) -> Path:
@@ -551,13 +581,19 @@ def _publish(config: dict, log: BotLogger, number: int, pull: dict) -> str:
     manifest = plugin_dir / "plugin.toml"
     if not manifest.is_file():
         events_dir, actions_dir = _adapter_dirs(plugin_dir)
+        # 同名插件已经发过版本就沿用它的名称 / 描述；首次发布才让推断器现编
+        previous = previous_manifest(WORK, account, key)
+        name = previous[0] if previous and previous[0] else _display_name(inferencer, scan)
+        description = (
+            previous[1] if previous and previous[1] else _manifest_description(inferencer, scan)
+        )
         write_manifest(
             plugin_dir,
             key=key,
             author=account,
             version=next_version(WORK, account, key),
-            name=_display_name(inferencer, scan),
-            description=_manifest_description(inferencer, scan),
+            name=name,
+            description=description,
             adapter_type=key if scan.has_adapter else None,
             events_dir=events_dir,
             actions_dir=actions_dir,

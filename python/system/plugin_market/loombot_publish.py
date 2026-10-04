@@ -3,11 +3,12 @@
 
 用法（都在插件库根目录执行）：
 
-  python scripts/loombot_publish.py check sources/<作者>/<key>
+  python scripts/loombot_publish.py check sources/<插件键>
       贡献者自检：plugin.toml / 目录整洁 / AST 语法 / 命名一致性 / 适配器声明 / 版本目录未被占用。
+      作者目录可以省掉；写成 sources/<作者>/<插件键>/ 也认。
 
-  python scripts/loombot_publish.py build sources/<作者>/<key> --apply . [--clean-source]
-      维护者或机器人发布：复制到 plugins/<作者>/<key>/<版本>/ 并合并进 index.json。
+  python scripts/loombot_publish.py build sources/<插件键> --apply . [--clean-source]
+      维护者或机器人发布：复制到 plugins/<作者>/<插件键>/<版本>/ 并合并进 index.json。
       --clean-source 会在发布成功后删掉 sources 里那份暂存源码（机器人用）。
 
   python scripts/loombot_publish.py start <作者>/<key> [--library .]
@@ -25,8 +26,9 @@
 1. **sources/ 是暂存区，不是长期源码目录。** 作者在这里提交，PR 通过后由机器人复制进
    plugins/ 并清理掉——所以作者每次面对的 sources/ 都是干净的，不用在一堆别人的插件里找自己那份。
    要更新就 `start` 把最新版本复制回来。
-2. **作者目录名 = namespace = plugin.toml 的 author，三者必须一致。** namespace 会拼进
-   plugin_key（`<作者>.<key>`），这是不同作者用同名插件的唯一隔离手段——不一致会让同步直接撞唯一键。
+2. **作者 = 你的 Gitee 登录名，插件键 = 目录名。** 作者目录可以省掉，机器人发布时按 PR 提交人
+   补 namespace 和 plugin.toml 的 author。namespace 会拼进 plugin_key（`<作者>.<插件键>`），
+   这是不同作者用同名插件的唯一隔离手段。
 3. **版本目录一旦发布就不可变。** 改代码要开新版本号；目标版本目录已存在会被 check 拦下。
 
 退出码：0 成功 / 1 校验失败 / 2 参数错误。
@@ -109,8 +111,14 @@ def load_manifest(src: Path) -> dict:
     return data
 
 
-def validate_manifest(meta: dict, *, expected_author: str, expected_key: str) -> dict:
-    """校验 [plugin] 段，并返回规范化后的字段。"""
+def validate_manifest(
+    meta: dict, *, expected_author: str | None, expected_key: str
+) -> dict:
+    """校验 [plugin] 段，并返回规范化后的字段。
+
+    `expected_author` 为空表示作者目录被省掉了（`sources/<插件键>/`）——这时清单里的 author
+    就是权威值，不再和目录名比。
+    """
     plugin = meta.get("plugin")
     if not isinstance(plugin, dict):
         raise PublishError(f"{MANIFEST_NAME} 缺少 [plugin] 段")
@@ -122,7 +130,7 @@ def validate_manifest(meta: dict, *, expected_author: str, expected_key: str) ->
     author = validate_segment(plugin["author"], label="作者 author")
     if key != expected_key:
         raise PublishError(f"[plugin] key={key!r} 与目录名 {expected_key!r} 不一致")
-    if author != expected_author:
+    if expected_author and author != expected_author:
         raise PublishError(f"[plugin] author={author!r} 与作者目录名 {expected_author!r} 不一致")
     version = str(plugin["version"]).strip()
     if not VERSION_RE.match(version):
@@ -399,17 +407,25 @@ def reconcile(root: Path) -> dict[str, list[str]]:
 
 
 def library_root_of(src: Path) -> Path | None:
-    """从 `.../sources/<作者>/<key>` 反推库根目录；不像就返回 None。"""
+    """从 `.../sources/<键>` 或 `.../sources/<作者>/<键>` 反推库根目录；不像就返回 None。"""
     resolved = src.resolve()
-    if resolved.parent.parent.name != "sources":
-        return None
-    return resolved.parent.parent.parent
+    if resolved.parent.name == "sources":
+        return resolved.parent.parent
+    if resolved.parent.parent.name == "sources":
+        return resolved.parent.parent.parent
+    return None
 
 
-def expected_names(src: Path) -> tuple[str, str]:
-    """作者目录名与插件目录名。"""
-    if src.parent.name == "" or src.name == "":
-        raise PublishError(f"源码目录必须是 sources/<作者>/<插件键> 的形式：{src}")
+def expected_names(src: Path) -> tuple[str | None, str]:
+    """插件目录名，以及（可选的）作者目录名。
+
+    作者目录可以省掉——`sources/<插件键>/` 就行，作者由 PR 提交人的 Gitee 登录名决定。
+    写成 `sources/<作者>/<插件键>/` 也认。
+    """
+    if src.name == "" or src.parent.name == "":
+        raise PublishError(f"源码目录必须是 sources/<插件键>（或 sources/<作者>/<插件键>）：{src}")
+    if src.parent.name == "sources":
+        return None, src.name
     return src.parent.name, src.name
 
 
@@ -422,7 +438,7 @@ def run_check(src: Path, *, library_root: Path | None) -> dict:
     if not src.is_dir():
         raise PublishError(f"源码目录不存在：{src}")
     author, key = expected_names(src)
-    print(f"== 自检 {author}/{key} ==")
+    print(f"== 自检 {author + '/' if author else ''}{key} ==")
 
     meta = load_manifest(src)
     info = validate_manifest(meta, expected_author=author, expected_key=key)
@@ -441,14 +457,14 @@ def run_check(src: Path, *, library_root: Path | None) -> dict:
 
     root = library_root or library_root_of(src)
     if root is not None:
-        target = root / "plugins" / author / key / info["version"]
+        target = root / "plugins" / info["author"] / key / info["version"]
         if target.exists():
             raise PublishError(
                 f"目标版本目录已存在：{target.relative_to(root).as_posix()}"
                 "（版本不可原地覆盖，请升版本号）"
             )
         # index 也查一遍：先复制再合并的话，合并失败会在库里留下一个没登记的孤儿版本目录。
-        entry = find_entry(load_index(root), author, key)
+        entry = find_entry(load_index(root), info["author"], key)
         listed = [
             str(item.get("version") or "")
             for item in (entry or {}).get("versions") or []
@@ -456,9 +472,12 @@ def run_check(src: Path, *, library_root: Path | None) -> dict:
         ]
         if info["version"] in listed:
             raise PublishError(
-                f"index.json 里已有 {author}/{key} v{info['version']}（版本不可原地覆盖，请升版本号）"
+                f"index.json 里已有 {info['author']}/{key} v{info['version']}（版本不可原地覆盖，请升版本号）"
             )
-        print(f"  ✓ 目标版本目录未被占用（plugins/{author}/{key}/{info['version']}/）")
+        print(
+            f"  ✓ 目标版本目录未被占用"
+            f"（plugins/{info['author']}/{key}/{info['version']}/）"
+        )
 
     print("== 自检通过 ==")
     return info
