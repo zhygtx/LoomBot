@@ -1,5 +1,7 @@
 package com.loombot.plugin.domain;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
@@ -26,7 +28,17 @@ public class PluginRepository {
     private String lastCommitHash;
     private LocalDateTime lastPullTime;
     private LocalDateTime lastScanTime;
+
+    /**
+     * 上次同步失败的原因。成功同步后必须能清空，所以显式声明 {@code ALWAYS}。
+     *
+     * <p>MyBatis-Plus 默认的 {@code NOT_NULL} 策略会忽略 null 字段：{@code setLastError(null)} 配 {@code
+     * updateById} 根本写不进库。后果是失败一次之后这条错误永远留在列表里，而且「内容未变化就跳过扫描」的判据也用到 {@code lastError ==
+     * null}，会跟着一直失效。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String lastError;
+
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }
