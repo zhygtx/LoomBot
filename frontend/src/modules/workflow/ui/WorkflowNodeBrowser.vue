@@ -665,7 +665,9 @@ onBeforeUnmount(() => {
 .workflow-node-browser__body {
   display: grid;
   min-block-size: 0;
+  min-inline-size: 0;
   flex: 1;
+  overflow: hidden;
   grid-template-columns: minmax(14rem, 17rem) minmax(18rem, 1fr) minmax(20rem, 25rem);
   grid-template-rows: minmax(0, 1fr);
 }
@@ -725,7 +727,9 @@ onBeforeUnmount(() => {
 
 .workflow-node-browser__panel-scroll {
   min-block-size: 0;
+  min-inline-size: 0;
   flex: 1;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: var(--sys-space-2);
 }
@@ -784,6 +788,7 @@ onBeforeUnmount(() => {
   display: grid;
   min-inline-size: 0;
   flex: 1;
+  overflow: hidden;
   border: 1px solid var(--sys-color-border);
   border-inline-start: 0.22rem solid var(--node-accent, var(--sys-color-action-primary));
   border-radius: 0.65rem;
@@ -840,6 +845,8 @@ onBeforeUnmount(() => {
 }
 
 .workflow-node-browser__node-title strong {
+  min-inline-size: 0;
+  flex: 1;
   overflow: hidden;
   font: var(--sys-typography-body-compact);
   text-overflow: ellipsis;
@@ -861,6 +868,7 @@ onBeforeUnmount(() => {
 }
 
 .workflow-node-browser__node-desc {
+  min-inline-size: 0;
   overflow: hidden;
   color: var(--sys-color-text-muted);
   font: var(--sys-typography-caption);
@@ -870,8 +878,13 @@ onBeforeUnmount(() => {
 }
 
 .workflow-node-browser__node-source {
+  display: block;
+  min-inline-size: 0;
+  overflow: hidden;
   color: var(--sys-color-action-primary);
   font: var(--sys-typography-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workflow-node-browser__detail-head {
