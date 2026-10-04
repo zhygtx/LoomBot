@@ -1,7 +1,8 @@
 name: Deploy
 
 on:
-  # 暂时只保留手动触发。R2 中转已接好，手动跑通一次后再恢复 push 到 main 自动部署。
+  push:
+    branches: [main]
   workflow_dispatch:
 
 # 部署串行执行；不取消正在进行的部署，避免 release 切到一半被打断。
