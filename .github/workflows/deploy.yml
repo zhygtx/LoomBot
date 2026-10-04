@@ -175,8 +175,8 @@ jobs:
           sudo systemctl reload nginx
 
           # 只保留最近 5 个 release，避免磁盘被历史版本撑满。
-          cd "$APP_DIR/releases"
-          ls -1dt */ 2>/dev/null | tail -n +6 | xargs -r sudo rm -rf --
+          # /opt/loombot 权限是 750，普通用户进不去，整段必须在 root 下执行。
+          sudo bash -c 'cd /opt/loombot/releases && ls -1dt */ 2>/dev/null | tail -n +6 | xargs -r rm -rf --'
 
           rm -f /tmp/backend.tar.gz /tmp/frontend.tar.gz
           echo "部署完成: $REL"
