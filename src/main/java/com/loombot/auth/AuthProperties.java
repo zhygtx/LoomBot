@@ -32,6 +32,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param permissionCacheTtl 授权缓存（角色 / 权限串）的有效期
  * @param authenticationCacheTtl 每次请求校验所需用户状态快照的有效期
  * @param issuer 令牌签发方，写进 {@code iss} 声明
+ * @param registrationDefaultRoleCode 新注册用户默认绑定的角色 code，必须是 {@code sys_role} 里已存在的种子角色
  */
 @ConfigurationProperties(prefix = "loombot.auth")
 public record AuthProperties(
@@ -42,7 +43,8 @@ public record AuthProperties(
         @DefaultValue("5") int emailCodeMaxAttempts,
         @DefaultValue("30m") Duration permissionCacheTtl,
         @DefaultValue("5m") Duration authenticationCacheTtl,
-        @DefaultValue("loombot") String issuer) {
+        @DefaultValue("loombot") String issuer,
+        @DefaultValue("USER") String registrationDefaultRoleCode) {
 
     /** HS256 = HMAC-SHA256，密钥短于 256 位时 jjwt 会拒绝用它签名。 */
     private static final int MIN_SECRET_BYTES = 32;
@@ -71,6 +73,11 @@ public record AuthProperties(
         if (emailCodeMaxAttempts < 1) {
             throw new IllegalStateException(
                     "loombot.auth.email-code-max-attempts 必须大于 0：0 会让验证码永远无法通过。");
+        }
+        if (registrationDefaultRoleCode == null || registrationDefaultRoleCode.isBlank()) {
+            throw new IllegalStateException(
+                    "loombot.auth.registration-default-role-code 不能为空：注册时必须能绑定一个已存在的角色，"
+                            + "否则新用户能登录但没有任何权限。");
         }
     }
 

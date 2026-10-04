@@ -1,0 +1,16 @@
+# 本机开发 profile。application.yml 里 spring.profiles.default=dev，
+# 所以不设置 SPRING_PROFILES_ACTIVE 时自动生效。
+#
+# 这一套只允许出现在开发机：注册即站长、启动重建库、验证码写日志。
+
+loombot:
+  datasource:
+    recreate:
+      # 每次启动清空并按 V1 重建，方便改表结构；数据每次重启都会丢。
+      enabled: true
+  auth:
+    # 本机测试要能直接进管理端，所以新注册用户绑站长角色。
+    registration-default-role-code: OWNER
+  notify:
+    # 本机不配置 SMTP，验证码以 WARN 级别写进日志。
+    allow-logging-mail: true

@@ -1,0 +1,25 @@
+# 生产 profile，用 SPRING_PROFILES_ACTIVE=prod 激活。
+#
+# 这一套是给服务器用的：注册只给普通用户、禁止重建库、SMTP 必须由环境变量提供。
+
+spring:
+  mail:
+    # 不设默认值：漏配任何一项都让应用在启动时失败，而不是运行时静默发不出信。
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    # 发件人。多数服务要求与 username 一致；留空则用 username
+    from: ${MAIL_FROM:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.ssl.enable: true
+
+loombot:
+  datasource:
+    recreate:
+      enabled: false
+  auth:
+    registration-default-role-code: USER
+  notify:
+    allow-logging-mail: false

@@ -140,14 +140,18 @@ public class UserService {
     }
 
     /**
-     * 绑定当前阶段的默认角色。测试阶段为 {@code OWNER}，项目定型后再通过配置收紧。
+     * 绑定注册默认角色。角色 code 来自 {@code loombot.auth.registration-default-role-code}： dev profile 是 {@code
+     * OWNER}（本机测试要能进管理端），prod profile 是 {@code USER}（普通用户）。
      *
      * <p>取不到角色时**必须报错**，不能默默跳过：那样用户能登录、却没有任何角色， 表现为「功能全是 403」，而根因（种子数据缺失）在日志里一个字都没有。
      */
     private void bindDefaultRole(Long userId) {
-        Long roleId = mapper.selectRoleIdByCode(SysUser.DEFAULT_ROLE_CODE);
+        String roleCode = properties.registrationDefaultRoleCode();
+        Long roleId = mapper.selectRoleIdByCode(roleCode);
         if (roleId == null) {
-            log.error("内置角色 {} 不存在，注册无法绑定角色。请检查 V1 迁移的种子数据。", SysUser.DEFAULT_ROLE_CODE);
+            log.error(
+                    "默认角色 {} 不存在，注册无法绑定角色。请检查 V1 迁移的种子数据，或 loombot.auth.registration-default-role-code 配置。",
+                    roleCode);
             throw new BusinessException(ErrorCode.INTERNAL_ERROR);
         }
         mapper.insertUserRole(userId, roleId);

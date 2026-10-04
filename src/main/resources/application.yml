@@ -13,6 +13,10 @@ spring:
   config:
     import: optional:file:./.env[.properties]
 
+  # 不显式指定时默认走 dev profile：本机开发开箱即用；生产用 SPRING_PROFILES_ACTIVE=prod 覆盖。
+  profiles:
+    default: dev
+
   # 数据源：密码等敏感项走环境变量，不要硬编码进仓库
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -81,7 +85,8 @@ loombot:
   #    应用会直接拒绝启动（而不是悄悄跳过重建继续跑旧结构）。部署时务必设为 false。
   datasource:
     recreate:
-      enabled: ${DB_RECREATE:true}
+      # 基类默认关闭，只由 dev profile 打开：默认值必须是安全的那一个。
+      enabled: false
       allowed-hosts: localhost,127.0.0.1,::1,[::1]
 
   # 认证。参数类见 com.loombot.auth.AuthProperties
@@ -89,6 +94,8 @@ loombot:
     # JWT 签名密钥（HMAC-SHA256，至少 32 字节）。不设默认值，漏配时拒绝启动：
     # 本机开发在项目根目录 .env 里给，生产在 systemd EnvironmentFile 里给。
     jwt-secret: ${JWT_SECRET}
+    # 新注册用户默认绑定的角色 code（sys_role.code）。基类默认普通用户，dev profile 覆盖为 OWNER。
+    registration-default-role-code: USER
     # 令牌有效期，同时也是 Redis 白名单条目的 TTL
     token-ttl: 24h
     # 邮箱验证码：有效期 / 同邮箱同场景的重发冷却 / 允许的连续错误次数
@@ -180,8 +187,8 @@ loombot:
     dependency-install-timeout-seconds: ${PLUGIN_DEPENDENCY_TIMEOUT_SECONDS:600}
 
   notify:
-    # 仅本机开发可显式打开。生产漏配 SMTP 时必须启动失败，不能把验证码写入日志。
-    allow-logging-mail: ${ALLOW_LOGGING_MAIL:false}
+    # 仅本机开发可打开（dev profile 覆盖为 true）。生产漏配 SMTP 时必须启动失败，不能把验证码写入日志。
+    allow-logging-mail: false
 
 # Actuator：健康检查与指标
 management:
@@ -211,21 +218,3 @@ logging:
     com.loombot.plugin.sync: WARN
     # Spring 框架日志级别
     org.springframework: INFO
-
----
-# 生产 profile：用 SPRING_PROFILES_ACTIVE=prod 激活。
-# SMTP 只在这里出现，且所有值必须由环境变量提供，漏配即启动失败。
-spring:
-  config:
-    activate:
-      on-profile: prod
-  mail:
-    host: ${MAIL_HOST}
-    port: ${MAIL_PORT:465}
-    username: ${MAIL_USERNAME}
-    password: ${MAIL_PASSWORD}
-    # 发件人。多数服务要求与 username 一致；留空则用 username
-    from: ${MAIL_FROM:}
-    properties:
-      mail.smtp.auth: true
-      mail.smtp.ssl.enable: true
