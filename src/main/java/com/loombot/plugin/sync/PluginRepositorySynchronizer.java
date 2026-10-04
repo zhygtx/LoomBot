@@ -72,15 +72,17 @@ public class PluginRepositorySynchronizer {
                         "origin",
                         definition.branch()));
         run(List.of("git", "-C", root.toString(), "checkout", definition.branch()));
+        // 这份工作副本是只读镜像，永远不该有本地提交（插件市场机器人另有一份 _work/repo）。
+        // 克隆用的是 --depth 1，远端前进后浅历史里证明不了祖先关系，
+        // `pull --ff-only` 会误判成「分支已分叉」直接失败，所以这里直接对齐远端。
         run(
                 List.of(
                         "git",
                         "-C",
                         root.toString(),
-                        "pull",
-                        "--ff-only",
-                        "origin",
-                        definition.branch()));
+                        "reset",
+                        "--hard",
+                        "origin/" + definition.branch()));
     }
 
     private String resolveCommit(Path root, boolean localLibrary)
