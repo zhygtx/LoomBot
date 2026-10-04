@@ -31,7 +31,12 @@ build/
 
 ### VS Code ###
 .vscode/
-/src/main/resources/application.yml
+
+### 本机环境变量 ###
+# 含真实口令，只留在本机；模板 .env.example 需要提交
+/.env
+/.env.local
+
 /logs/
 /docs/
 /config/

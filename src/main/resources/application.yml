@@ -1,0 +1,231 @@
+server:
+  # 服务器监听端口
+  port: 8080
+
+spring:
+  # 应用名称
+  application:
+    name: loombot
+
+  # 本机开发的环境变量文件：把 KEY=VALUE 写进项目根目录的 .env（已被 .gitignore 忽略），
+  # 启动时自动加载；文件不存在则静默跳过。生产环境用 systemd 的 EnvironmentFile 注入同名变量，
+  # 所以 application.yml 里不出现任何真实口令，可以安全提交进仓库。
+  config:
+    import: optional:file:./.env[.properties]
+
+  # 数据源：密码等敏感项走环境变量，不要硬编码进仓库
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:bot}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:root}
+    # 不设默认值：本机开发由项目根目录 .env 提供，生产由 systemd EnvironmentFile 提供；漏配即启动失败
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+
+  # Flyway 数据库迁移：启动时自动执行 db/migration 下未应用的脚本，
+  # 用 flyway_schema_history 表记录已应用版本，替代「手动跑 SQL + 靠记忆」。
+  #
+  # ⚠️ 项目未定型期间，db/migration 下只有**一个** V1__bootstrap_schema.sql（建表 + 内置测试数据）。
+  #    改表结构的流程是「改 V1 → 重启」，靠下面的 loombot.datasource.recreate 在启动时清库重建，
+  #    而不是每次改表都追加 V5、V6… 的增量脚本。等结构定型后关掉重建开关，再回到增量迁移。
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # 保持「禁止 clean」是对的默认值：重建开关没打开时，谁也不能清库。
+    # 打开重建时由 SchemaRecreateGuard 显式调用 Flyway 的 clean，不走这个属性。
+    clean-disabled: true
+    # 不自动 baseline：让「库里已有表但没有迁移记录」直接报错，
+    # 而不是静默跳过 V1 —— 静默跳过会让你以为表建好了，实际没有
+    baseline-on-migrate: false
+
+  # Redis
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DB:0}
+      timeout: 3s
+
+  # 邮件（SMTP）：发注册 / 重置密码验证码。
+  #
+  # SMTP 是生产专属配置，放在本文件末尾的 prod profile 文档里，值全部由 MAIL_* 环境变量注入。
+  # 默认 profile 下不出现 spring.mail.host 这个键，MailConfig 因此走日志邮件实现，
+  # 前提是显式设置 ALLOW_LOGGING_MAIL=true（本机开发在 .env 里设）。
+  # 这样既避开「空 host 建出 JavaMailSender」的陷阱，也不会把真实账号写进仓库。
+
+# MyBatis-Plus
+mybatis-plus:
+  configuration:
+    # 开启驼峰命名与下划线命名的自动转换
+    map-underscore-to-camel-case: true
+  # 指定 XML 映射文件路径
+  mapper-locations: classpath*:mapper/**/*.xml
+  global-config:
+    banner: false
+    db-config:
+      # 主键策略：雪花 ID（分布式自增，适合后续多节点）
+      id-type: assign_id
+
+# Python Adapter Host control plane
+# Java only calls internal HTTP. WebSocket, heartbeat and plugin runtime live in Python.
+loombot:
+  # 开发期的表结构重建。
+  #
+  # 打开后：每次启动先清空数据库，再由 Flyway 从 V1 重建（表结构 + 内置测试数据）。
+  # 好处是改表不用写迁移文件，代价是**每次重启数据都没了**。
+  #
+  # ⚠️ 一道硬闸门：只有数据库主机在白名单里才允许重建。指向别的主机时，若本开关仍是 true，
+  #    应用会直接拒绝启动（而不是悄悄跳过重建继续跑旧结构）。部署时务必设为 false。
+  datasource:
+    recreate:
+      enabled: ${DB_RECREATE:true}
+      allowed-hosts: localhost,127.0.0.1,::1,[::1]
+
+  # 认证。参数类见 com.loombot.auth.AuthProperties
+  auth:
+    # JWT 签名密钥（HMAC-SHA256，至少 32 字节）。不设默认值，漏配时拒绝启动：
+    # 本机开发在项目根目录 .env 里给，生产在 systemd EnvironmentFile 里给。
+    jwt-secret: ${JWT_SECRET}
+    # 令牌有效期，同时也是 Redis 白名单条目的 TTL
+    token-ttl: 24h
+    # 邮箱验证码：有效期 / 同邮箱同场景的重发冷却 / 允许的连续错误次数
+    email-code-ttl: 5m
+    email-code-cooldown: 60s
+    email-code-max-attempts: 5
+    # 授权缓存（带版本前缀）的有效期。权限启停时管理服务会主动失效受影响用户缓存；
+    # TTL 是异常情况下的兜底，后续角色绑定管理也必须主动失效缓存。
+    permission-cache-ttl: 30m
+    # 每个请求校验令牌时使用的用户状态快照。用户停用或改密后主动失效；
+    # TTL 只兜底外部直接改库或异常漏失效。
+    authentication-cache-ttl: 5m
+
+  system:
+    cache:
+      # 当前用户侧边栏读模型。菜单或关系变更后推进版本号整体失效。
+      navigation-ttl: 30m
+
+  connection:
+    runtime-sync-interval: ${CONNECTION_RUNTIME_SYNC_INTERVAL:2s}
+    runtime-sync-initial-delay: ${CONNECTION_RUNTIME_SYNC_INITIAL_DELAY:3s}
+
+  # 工作流：Java 只保存定义、维护触发索引并落库执行日志，引擎在 Python 运行时。
+  workflow:
+    runtime:
+      task-stream-key: ${WORKFLOW_TASK_STREAM:workflow:task:v1}
+      execution-log-stream-key: ${WORKFLOW_LOG_STREAM:workflow:execution-log:v1}
+      index-key-prefix: ${WORKFLOW_INDEX_PREFIX:loombot:workflow:index}
+      cleanup-interval-ms: ${WORKFLOW_CLEANUP_INTERVAL_MS:60000}
+      task-ttl: ${WORKFLOW_TASK_TTL:5m}
+      # 执行日志落库：运行时把日志写进 Redis 流，Java 批量消费写 MySQL。
+      log-persist-enabled: ${WORKFLOW_LOG_PERSIST_ENABLED:true}
+      # 日志与无引用定义版本的保留天数。清理时先删过期执行记录，再删没人引用的旧版本。
+      log-retention-days: ${WORKFLOW_LOG_RETENTION_DAYS:7}
+      log-cleanup-interval: ${WORKFLOW_LOG_CLEANUP_INTERVAL:1h}
+      log-cleanup-initial-delay: ${WORKFLOW_LOG_CLEANUP_INITIAL_DELAY:5m}
+      log-cleanup-batch-size: ${WORKFLOW_LOG_CLEANUP_BATCH_SIZE:1000}
+      # 大内容（二进制/文件）落盘目录。运行时和 Java 读写同一个目录，
+      # 所以由 Java 解析成绝对路径后通过 WORKFLOW_ARTIFACT_DIR 下发给运行时。
+      artifacts-dir: ${WORKFLOW_ARTIFACT_DIR:python/artifacts}
+    worker:
+      auto-start: ${WORKFLOW_WORKER_AUTO_START:true}
+      module: ${WORKFLOW_WORKER_MODULE:system.executor.main}
+      working-directory: ${WORKFLOW_WORKER_DIRECTORY:python}
+      control-token: ${WORKFLOW_CONTROL_TOKEN:loombot-dev-workflow-token}
+      test-base-url: ${WORKFLOW_TEST_BASE_URL:http://127.0.0.1:9200}
+      startup-timeout: ${WORKFLOW_WORKER_STARTUP_TIMEOUT:20s}
+
+  # 跨域白名单。默认值等于「本机 + 局域网手机调试能跑通的最小集合」。
+  #
+  # ⚠️ 手机连局域网调试时必须列出来源，否则浏览器带 Origin 头的请求会被 CorsFilter 拒掉，
+  #    返回 403 + "Invalid CORS request"，前端把它显示成「没有操作权限」——
+  #    看起来像权限问题，实际是跨域。
+  #    注意：用「手机访问 http://<本机IP>:5173」这种方式时，请求由 Vite 代理转发，
+  #    浏览器只有一个源、本来不触发 CORS；但如果页面里请求的是绝对地址（或用了
+  #    VITE_API_BASE_URL 指到 8080），就会真的跨域，此时这几条就是必需的。
+  #    本机 IP 会随网络变化（换 WiFi、插网线都会变），用 `ipconfig` 确认后改成当前值。
+  #    生产部署时用环境变量 CORS_ALLOWED_ORIGINS 覆盖，不要把内网 IP 带上去。
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,https://dev.loombot.top,https://loombot.top,http://10.54.78.167:5173}
+
+  adapter:
+    # Python 解释器；Windows 上通常是 python，部分发行版是 python3
+    python-command: ${PYTHON_COMMAND:python}
+    task-ttl: 5m
+    control-base-url: ${ADAPTER_CONTROL_BASE_URL:http://127.0.0.1:9100}
+    control-token: ${ADAPTER_CONTROL_TOKEN:loombot-dev-adapter-token}
+    public-ws-base-url: ${ADAPTER_PUBLIC_WS_BASE_URL:ws://127.0.0.1:9000}
+    request-timeout: 10s
+    auto-start: ${ADAPTER_AUTO_START:true}
+    working-directory: ${ADAPTER_WORKING_DIRECTORY:python}
+    host-module: ${ADAPTER_HOST_MODULE:system.adapter.main}
+    plugin-root: ${ADAPTER_PLUGIN_ROOT:plugins}
+    redis-url: ${ADAPTER_REDIS_URL:redis://localhost:6379/0}
+    restart-backoff-initial-ms: 1000
+    restart-backoff-max-ms: 60000
+    startup-timeout: 20s
+
+  # 插件仓库。repository-url 为空时只扫描本地目录，适合开发期。
+  # 填公共 Git URL 后，每次启动会先 fetch / pull，再读取 index.json。
+  plugin:
+    # 插件库根目录：下面的每个子目录是一个插件库，靠它自己的 repo.json 声明
+    # （仓库地址、分支、用哪个子扫描器）。加库 = 放一个文件夹，不用改这里。
+    plugins-root: ${PLUGIN_PLUGINS_ROOT:python/plugins}
+    sync-on-start: ${PLUGIN_SYNC_ON_START:true}
+    auto-sync: ${PLUGIN_AUTO_SYNC:true}
+    sync-interval: ${PLUGIN_SYNC_INTERVAL:30s}
+    command-timeout-seconds: ${PLUGIN_GIT_TIMEOUT_SECONDS:60}
+    dependency-install-timeout-seconds: ${PLUGIN_DEPENDENCY_TIMEOUT_SECONDS:600}
+
+  notify:
+    # 仅本机开发可显式打开。生产漏配 SMTP 时必须启动失败，不能把验证码写入日志。
+    allow-logging-mail: ${ALLOW_LOGGING_MAIL:false}
+
+# Actuator：健康检查与指标
+management:
+  endpoints:
+    web:
+      exposure:
+        # 只暴露必要端点。actuator 暴露过多是常见的安全事故来源
+        include: health,info
+  endpoint:
+    health:
+      # 不对外展示数据库 / Redis 等组件细节，避免泄漏内部结构
+      show-details: never
+
+# 日志配置
+logging:
+  level:
+    # 应用日志级别
+    com.loombot: DEBUG
+    # 定时任务和它们触发的 SQL 调到 WARN，避免刷屏；排查时再临时调回 DEBUG
+    com.loombot.connection.mapper: WARN
+    com.loombot.plugin.mapper: WARN
+    com.loombot.auth.mapper: WARN
+    com.loombot.system.mapper: WARN
+    com.loombot.workflow.mapper: WARN
+    com.loombot.connection.sync.ConnectionRuntimeSyncService: WARN
+    com.loombot.plugin.service.PluginSyncService: WARN
+    com.loombot.plugin.sync: WARN
+    # Spring 框架日志级别
+    org.springframework: INFO
+
+---
+# 生产 profile：用 SPRING_PROFILES_ACTIVE=prod 激活。
+# SMTP 只在这里出现，且所有值必须由环境变量提供，漏配即启动失败。
+spring:
+  config:
+    activate:
+      on-profile: prod
+  mail:
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    # 发件人。多数服务要求与 username 一致；留空则用 username
+    from: ${MAIL_FROM:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.ssl.enable: true
