@@ -35,7 +35,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -67,7 +66,7 @@ public class PluginRepositoryAdminService {
     private static final String WORKING_COPY = "repo";
 
     /** 库 key 同时当文件夹名用，所以限死字符集，顺带挡住路径穿越。 */
-    private static final Pattern KEY_PATTERN = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+    private static final int MAX_KEY_LENGTH = 64;
 
     /** 已知子扫描器：内置的 `loombot`，或 `local`（用库文件夹里的 scanner.py）。 */
     private static final Set<String> SCANNERS = Set.of("loombot", "local");
@@ -471,10 +470,29 @@ public class PluginRepositoryAdminService {
 
     private static String requireKey(String key) {
         String value = key == null ? "" : key.strip();
-        if (!KEY_PATTERN.matcher(value).matches()) {
-            throw new IllegalArgumentException("插件库 key 只能包含字母、数字、点、下划线和短横线，且不超过 64 个字符: " + key);
+        if (!isSafeKey(value)) {
+            throw new IllegalArgumentException(
+                    "插件库 key 不能为空、不能超过 64 个字符，也不能包含路径分隔符、`..` 或控制字符: " + key);
         }
         return value;
+    }
+
+    /**
+     * 库 key 的合法性。
+     *
+     * <p>它同时是文件夹名，所以必须挡住路径分隔符和 {@code ..}；其余不设白名单，中文、日文、 西里尔字母、emoji 都放行 —— 中文目录名在 Linux
+     * 上完全合法，没有理由只认 ASCII。 长度按码点算，和 MySQL 的字符计数、Python 的 {@code len()} 对齐。
+     */
+    private static boolean isSafeKey(String text) {
+        if (text.isEmpty()
+                || text.codePointCount(0, text.length()) > MAX_KEY_LENGTH
+                || text.contains("/")
+                || text.contains("\\")
+                || text.contains("..")
+                || text.chars().allMatch(ch -> ch == '.')) {
+            return false;
+        }
+        return text.codePoints().noneMatch(Character::isISOControl);
     }
 
     private static String normalizeScanner(String scanner) {

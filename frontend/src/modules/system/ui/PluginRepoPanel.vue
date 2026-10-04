@@ -46,8 +46,23 @@ const formError = ref('')
 const canList = computed(() => hasPermission(session.user?.permissions, 'plugin:repo:list'))
 const canManage = computed(() => hasPermission(session.user?.permissions, 'plugin:repo:manage'))
 
-/** 和后端同一条规则：key 同时当文件夹名，限死字符集顺带挡住路径穿越。 */
-const KEY_PATTERN = /^[A-Za-z0-9._-]{1,64}$/
+/**
+ * 和后端同一条规则：key 同时当文件夹名，限死字符集顺带挡住路径穿越。
+ * 不维护字符白名单，中文、日文、emoji 都放行，只挡路径分隔符、`..`、纯点和控制字符。
+ */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/
+
+function isValidKey(value: string): boolean {
+  return (
+    value.length > 0 &&
+    [...value].length <= 64 &&
+    !value.includes('/') &&
+    !value.includes('\\') &&
+    !value.includes('..') &&
+    !/^\.+$/.test(value) &&
+    !CONTROL_CHARS.test(value)
+  )
+}
 
 function resetForm(): void {
   editingKey.value = null
@@ -97,8 +112,8 @@ async function load(): Promise<void> {
 
 async function submit(): Promise<void> {
   const key = form.value.key.trim()
-  if (!KEY_PATTERN.test(key)) {
-    formError.value = '只能包含字母、数字、点、下划线和短横线，且不超过 64 个字符'
+  if (!isValidKey(key)) {
+    formError.value = '不能为空、不能超过 64 个字符，也不能包含斜杠、`..`、纯点或控制字符'
     return
   }
   formError.value = ''

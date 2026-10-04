@@ -31,8 +31,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-_SAFE_PART = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
-_KEY_CHARS = re.compile(r"^[A-Za-z0-9._:/\\-]{1,255}$")
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
 PLUGIN = "PLUGIN"
 CONNECTION = "CONNECTION"
@@ -68,25 +67,45 @@ def _now_ms() -> int:
 
 
 def _require_part(value: str, field: str) -> str:
+    """作用域标识（插件 key、连接 id、锁名）。
+
+    不维护字符白名单：中文、日文、西里尔字母、emoji 都放行，只挡真正会造成问题的东西 ——
+    路径分隔符、`..`、纯点、控制字符。这样插件目录叫什么，key 就能叫什么，不会出现
+    "中文目录能装、`ctx.storage` 用不了"这种半截兼容。
+    """
     text = str(value or "").strip()
-    if not _SAFE_PART.fullmatch(text):
+    if (
+        not text
+        or len(text) > 160
+        or "/" in text
+        or "\\" in text
+        or ".." in text
+        or not text.strip(".")
+        or _CONTROL_CHARS.search(text)
+    ):
         raise PluginStorageError(
-            f"{field} 只能包含字母、数字、点、下划线、冒号和短横线，且不超过 160 字符"
+            f"{field} 不能为空、不能超过 160 字符，也不能包含路径分隔符、`..` 或控制字符"
         )
     return text
 
 
 def _require_key(key: str) -> str:
+    """KV key 与文件引用。
+
+    比作用域标识多允许斜杠，用来表达层级；仍然不允许 `..`、以斜杠开头和控制字符。
+    """
     text = str(key or "").strip()
     if (
         not text
         or len(text) > 255
-        or not _KEY_CHARS.fullmatch(text)
         or ".." in text
+        or not text.strip(".")
         or text.startswith("/")
+        or text.startswith("\\")
+        or _CONTROL_CHARS.search(text)
     ):
         raise PluginStorageError(
-            "key 只能包含字母、数字、点、下划线、冒号、短横线和斜杠，且不能越界"
+            "key 不能为空、不能超过 255 字符，也不能以斜杠开头或包含 `..`、纯点、控制字符"
         )
     return text
 

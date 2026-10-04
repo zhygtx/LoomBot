@@ -42,13 +42,13 @@ public class PluginStorageService {
 
     private static final Logger log = LoggerFactory.getLogger(PluginStorageService.class);
 
-    /** 作用域标识：只能包含字母、数字、点、下划线、冒号和短横线。 */
-    private static final Pattern SAFE_PART = Pattern.compile("^[A-Za-z0-9._:-]{1,160}$");
-
-    /** key：在 SAFE_PART 的基础上多允许斜杠，用来表达层级。 */
-    private static final Pattern SAFE_KEY = Pattern.compile("^[A-Za-z0-9._:/\\\\-]{1,255}$");
-
     private static final Pattern KNOWN_SCOPE = Pattern.compile("^(PLUGIN|CONNECTION|EPHEMERAL)$");
+
+    /** 作用域标识（插件 key、连接 id）的长度上限，与表结构一致。 */
+    private static final int MAX_PART_LENGTH = 160;
+
+    /** key 的长度上限，与 {@code plugin_state.state_key} 的列宽一致。 */
+    private static final int MAX_KEY_LENGTH = 255;
 
     /** 扫描上限。防止一次请求把整张表捞回来。 */
     private static final int MAX_SCAN_LIMIT = 1000;
@@ -366,22 +366,58 @@ public class PluginStorageService {
 
     private static String requirePart(String value, String field) {
         String text = value == null ? "" : value.strip();
-        if (!SAFE_PART.matcher(text).matches()) {
+        if (!isSafePart(text)) {
             throw new PluginStorageException.InvalidRequest(
-                    field + " 只能包含字母、数字、点、下划线、冒号和短横线，且不超过 160 字符");
+                    field + " 不能为空、不能超过 160 字符，也不能包含路径分隔符、`..` 或控制字符");
         }
         return text;
     }
 
     private static String requireKey(String key) {
         String text = key == null ? "" : key.strip();
-        if (!SAFE_KEY.matcher(text).matches()
-                || text.contains("..")
-                || text.startsWith("/")
-                || text.startsWith("\\")) {
-            throw new PluginStorageException.InvalidRequest("key 只能包含字母、数字、点、下划线、冒号、短横线和斜杠，且不能越界");
+        if (!isSafeKey(text)) {
+            throw new PluginStorageException.InvalidRequest(
+                    "key 不能为空、不能超过 255 字符，也不能以斜杠开头或包含 `..`、纯点、控制字符");
         }
         return text;
+    }
+
+    /**
+     * 作用域标识（插件 key、连接 id、锁名）的合法性。
+     *
+     * <p>刻意不维护字符白名单：插件 key 来自插件库的目录名，中文、日文、西里尔字母、emoji 都应当 原样可用，只挡真正会造成问题的东西 —— 路径分隔符、{@code
+     * ..}、纯点、控制字符。维护白名单的代价 是"目录名能建、{@code ctx.storage} 用不了"这种半截兼容，比放宽规则更难查。
+     *
+     * <p>长度按码点算：Java 的 {@code length()} 数的是 UTF-16 单元，MySQL 的 {@code VARCHAR} 和 Python 的 {@code
+     * len()} 数的是字符，用码点才能对齐。
+     */
+    private static boolean isSafePart(String text) {
+        if (text.isEmpty()
+                || text.codePointCount(0, text.length()) > MAX_PART_LENGTH
+                || text.contains("/")
+                || text.contains("\\")
+                || text.contains("..")
+                || text.strip().chars().allMatch(ch -> ch == '.')) {
+            return false;
+        }
+        return text.codePoints().noneMatch(Character::isISOControl);
+    }
+
+    /**
+     * KV key 与文件引用的合法性。
+     *
+     * <p>比作用域标识多允许斜杠，用来表达层级；仍然拒绝 {@code ..}、以斜杠开头和控制字符。
+     */
+    private static boolean isSafeKey(String text) {
+        if (text.isEmpty()
+                || text.codePointCount(0, text.length()) > MAX_KEY_LENGTH
+                || text.contains("..")
+                || text.strip().chars().allMatch(ch -> ch == '.')
+                || text.startsWith("/")
+                || text.startsWith("\\")) {
+            return false;
+        }
+        return text.codePoints().noneMatch(Character::isISOControl);
     }
 
     /**
@@ -441,19 +477,24 @@ public class PluginStorageService {
                 + referenceDigest;
     }
 
+    /**
+     * 把一段标识压成可以安全当目录名用的形式。
+     *
+     * <p>保留 Unicode 字母数字，所以 {@code loombot.Warframe裂隙} 在磁盘上还是这个名字，排查时不用
+     * 对着一串下划线猜是哪个插件。真正保证唯一性的是对象键末尾的摘要，不是这里的可读部分。
+     */
     private static String sanitizeSegment(String value) {
         StringBuilder builder = new StringBuilder(value.length());
-        for (int index = 0; index < value.length(); index++) {
-            char ch = value.charAt(index);
-            boolean safe =
-                    (ch >= 'a' && ch <= 'z')
-                            || (ch >= 'A' && ch <= 'Z')
-                            || (ch >= '0' && ch <= '9')
-                            || ch == '.'
-                            || ch == '_'
-                            || ch == '-';
-            builder.append(safe ? ch : '_');
-        }
+        value.codePoints()
+                .forEach(
+                        ch -> {
+                            boolean safe =
+                                    Character.isLetterOrDigit(ch)
+                                            || ch == '.'
+                                            || ch == '_'
+                                            || ch == '-';
+                            builder.appendCodePoint(safe ? ch : '_');
+                        });
         return builder.toString();
     }
 
