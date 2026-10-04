@@ -170,6 +170,12 @@ class NodeWorker:
             deadline_ms=int(payload.get("deadlineMs") or 0),
             trigger=dict(payload.get("trigger") or {}),
             action_caller=partial(self._call_action, invoke_id),
+            plugin_key=str(payload.get("pluginKey") or ""),
+            connection_id=(
+                int(payload.get("connectionId"))
+                if payload.get("connectionId") not in (None, "")
+                else None
+            ),
         )
 
     async def _call_action(

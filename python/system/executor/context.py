@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from system.executor.errors import ActionError
+from system.plugin_storage import storage_for
 
 
 @dataclass
@@ -22,9 +23,16 @@ class ExecutionContext:
     deadline_ms: int
     trigger: dict[str, Any]
     action_caller: Callable[[int, str, dict[str, Any]], Awaitable[Any]]
+    plugin_key: str = ""
+    connection_id: int | None = None
     logger: logging.Logger = field(
         default_factory=lambda: logging.getLogger("workflow-node")
     )
+
+    @property
+    def storage(self):
+        """插件持久化入口；无连接触发时 connection 作用域为 None。"""
+        return storage_for(self.plugin_key or "unknown", self.connection_id)
 
     async def call_action(
         self, connection_id: int, node_key: str, params: dict[str, Any]

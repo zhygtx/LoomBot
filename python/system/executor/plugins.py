@@ -233,6 +233,8 @@ class PluginRuntime:
                         "nodeKey": ctx.node_key,
                         "deadlineMs": ctx.deadline_ms,
                         "trigger": ctx.trigger,
+                        "pluginKey": ctx.plugin_key,
+                        "connectionId": ctx.connection_id,
                     },
                 }
             )

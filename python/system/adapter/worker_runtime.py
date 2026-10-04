@@ -19,6 +19,7 @@ import httpx
 import websockets
 
 from system.adapter.models import ConnectionObservation, DesiredConnection
+from system.plugin_storage import storage_for
 from system.scanner.adapters import scan_adapter_specs
 from system.scanner.manifest import AdapterDecl, read_manifest
 
@@ -121,6 +122,11 @@ class ConnectionContext:
     @property
     def endpoint_path(self) -> str | None:
         return self.desired.endpoint_path
+
+    @property
+    def storage(self):
+        """插件持久化入口：plugin / connection / ephemeral 三种作用域。"""
+        return storage_for(self.plugin_key or self.adapter_type, self.connection_id)
 
     def current_state(self) -> str:
         return self.observation.state

@@ -421,6 +421,12 @@ class WorkflowEngine:
                 deadline_ms=int(job.get("deadline") or 0),
                 trigger=context.get("input") or {},
                 action_caller=self.actions.call,
+                plugin_key=str(info.get("pluginKey") or ""),
+                connection_id=(
+                    int(job.get("connectionId"))
+                    if job.get("connectionId") not in (None, "")
+                    else None
+                ),
             )
             result = await runtime.invoke(node_key, ctx, args, kwargs)
             trace["output"] = self.encode(outcome, result)
