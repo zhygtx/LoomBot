@@ -28,6 +28,7 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.MediaTypeFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -212,7 +213,8 @@ public class WorkflowController {
             @PathVariable String executionId, @PathVariable String fileName) throws IOException {
         Path path = executionQuery.artifact(CurrentUser.requireId(), executionId, fileName);
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        headers.setContentType(
+                MediaTypeFactory.getMediaType(fileName).orElse(MediaType.APPLICATION_OCTET_STREAM));
         headers.setContentDisposition(
                 ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build());
         // 插件返回的内容不可信：别让浏览器按内容猜类型执行

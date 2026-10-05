@@ -81,9 +81,14 @@ class PayloadStore:
         )
         return ref
 
-    def add_file(self, raw: bytes, file_name: str, content_type: str) -> str:
+    def add_file(
+        self, raw: bytes, file_name: str, content_type: str, suffix: str = ""
+    ) -> str:
         ref = self._ref("f")
-        stored = f"{ref}-{file_name}" if file_name else f"{ref}.bin"
+        if file_name:
+            stored = f"{ref}-{file_name}"
+        else:
+            stored = f"{ref}{suffix or '.bin'}"
         if self.artifact_dir is not None:
             target_dir = self.artifact_dir / self.execution_id
             target_dir.mkdir(parents=True, exist_ok=True)
@@ -127,21 +132,55 @@ def encode_value(value: Any, store: PayloadStore | None = None) -> Any:
 
 def _encode_binary(raw: bytes, store: PayloadStore | None) -> dict[str, Any]:
     digest = hashlib.sha256(raw).hexdigest()
+    suffix, content_type = _sniff_binary(raw)
     marker: dict[str, Any] = {
         "truncated": True,
         "kind": "file",
         "type": "bytes",
         "size": len(raw),
         "sha256": digest,
-        "contentType": "application/octet-stream",
+        "contentType": content_type,
     }
     if len(raw) > MAX_PAYLOAD_CHARS:
         marker["contentOmitted"] = True
         return marker
     if store is None:
         return marker
-    marker["fileName"] = store.add_file(raw, "", "application/octet-stream")
+    marker["fileName"] = store.add_file(raw, "", content_type, suffix)
     return marker
+
+
+def _sniff_binary(raw: bytes) -> tuple[str, str]:
+    """按文件头猜出二进制类型，返回 (扩展名, MIME)。
+
+    节点只声明返回 bytes，执行器不知道具体是什么格式；不猜的话所有产物都会
+    落成 `.bin`/octet-stream，前端下载截图时只能看到 `f1.bin`。只认可靠的
+    文件头，认不出仍按通用二进制处理。
+    """
+    head = bytes(raw[:16])
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png", "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return ".jpg", "image/jpeg"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif", "image/gif"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return ".webp", "image/webp"
+    if head.startswith(b"RIFF") and head[8:12] == b"WAVE":
+        return ".wav", "audio/wav"
+    if head.startswith(b"BM"):
+        return ".bmp", "image/bmp"
+    if head.startswith(b"%PDF-"):
+        return ".pdf", "application/pdf"
+    if head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+        return ".zip", "application/zip"
+    if head.startswith(b"\x1f\x8b"):
+        return ".gz", "application/gzip"
+    if len(head) >= 8 and head[4:8] == b"ftyp":
+        return ".mp4", "video/mp4"
+    if head.startswith(b"ID3") or head[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return ".mp3", "audio/mpeg"
+    return ".bin", "application/octet-stream"
 
 
 def _jsonable(value: Any) -> Any:
