@@ -96,11 +96,14 @@ class NodeWorker:
             target=self._pump_stdin, args=(loop,), daemon=True, name="node-worker-stdin"
         ).start()
         _emit({"type": "ready", "nodes": self.descriptors})
-        while True:
-            message = await self._queue.get()
-            if message is None:
-                return
-            await self._dispatch(message)
+        try:
+            while True:
+                message = await self._queue.get()
+                if message is None:
+                    return
+                await self._dispatch(message)
+        finally:
+            await _run_shutdown_hooks()
 
     def _pump_stdin(self, loop: asyncio.AbstractEventLoop) -> None:
         """阻塞读 stdin（放在线程里），解出消息丢回事件循环。"""
@@ -227,6 +230,21 @@ async def _call(func: Callable[..., Any], args: list[Any], kwargs: dict[str, Any
 def _code_of(exc: BaseException) -> str:
     """异常带回宿主时保留分类错误码，其余统一 NODE_FAILED。"""
     return str(getattr(exc, "code", "") or "NODE_FAILED")
+
+
+async def _run_shutdown_hooks() -> None:
+    """节点进程退出前释放插件常驻资源（浏览器、临时目录等）。"""
+    try:
+        import loombot_node  # 宿主 SDK，插件在 import 阶段注册清理回调
+    except Exception:  # noqa: BLE001 - 宿主 SDK 不可用时按无回调处理
+        return
+    runner = getattr(loombot_node, "run_shutdown_hooks", None)
+    if runner is None:
+        return
+    try:
+        await runner()
+    except Exception as exc:  # noqa: BLE001 - 清理失败不能拦住进程退出
+        print(f"[node-worker] 执行退出清理失败: {exc}", file=sys.stderr)
 
 
 def _parse_args() -> argparse.Namespace:

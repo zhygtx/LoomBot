@@ -6,11 +6,38 @@
 from __future__ import annotations
 
 import inspect
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 _NODES: list["NodeSpec"] = []
 _ENTITIES: list[Any] = []
+_SHUTDOWN_HOOKS: list[Callable[[], Any]] = []
+
+
+def on_shutdown(func: Callable[[], Any]) -> Callable[[], Any]:
+    """注册节点进程退出时的清理回调，同步/异步函数都支持。
+
+    插件常驻资源（浏览器、线程池、临时目录）在这里释放；节点宿主进程收到
+    shutdown 或 stdin 关闭时按注册顺序倒序执行。
+    """
+    _SHUTDOWN_HOOKS.append(func)
+    return func
+
+
+async def run_shutdown_hooks() -> None:
+    """执行并清空已注册的退出回调；清理失败只记日志，不影响进程退出。"""
+    while _SHUTDOWN_HOOKS:
+        hook = _SHUTDOWN_HOOKS.pop()
+        try:
+            result = hook()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001 - 退出阶段的异常不能拦住进程
+            print(
+                f"[loombot_node] shutdown hook {getattr(hook, '__name__', hook)} failed: {exc}",
+                file=sys.stderr,
+            )
 
 
 def node_registry_size() -> int:

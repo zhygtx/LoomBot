@@ -54,8 +54,31 @@ public class PluginDependencyInstaller {
                         "-r",
                         requirements.toString()),
                 pluginProperties.dependencyInstallTimeoutSeconds());
+        runPostInstall(pluginDir, venv, python);
         log.info("插件依赖已安装: pluginDir={}, python={}", pluginDir, python);
         return python.toString();
+    }
+
+    /**
+     * 可选的安装后脚本 install.py：用于 Playwright 这类需要在 pip 之后另下资源的插件。
+     *
+     * <p>每个 venv 最多执行一次，用标记文件去重；否则 30 秒一轮的同步会反复触发下载。
+     */
+    private void runPostInstall(Path pluginDir, Path venv, Path python)
+            throws IOException, InterruptedException {
+        Path installer = pluginDir.resolve("install.py");
+        if (!Files.isRegularFile(installer)) {
+            return;
+        }
+        Path marker = venv.resolve(".loombot-install-done");
+        if (Files.isRegularFile(marker)) {
+            return;
+        }
+        run(
+                List.of(python.toString(), installer.toString()),
+                pluginProperties.dependencyInstallTimeoutSeconds());
+        Files.writeString(marker, "ok");
+        log.info("插件安装脚本已执行: {}", installer);
     }
 
     private static Path venvPython(Path venv) {
