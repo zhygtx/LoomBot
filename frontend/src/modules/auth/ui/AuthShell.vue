@@ -27,7 +27,7 @@ defineProps<{
         <i />
       </div>
 
-      <p class="auth-shell__footnote">个人项目早期阶段 · 默认站长权限便于功能联调</p>
+      <p class="auth-shell__footnote">个人项目 · 早期阶段</p>
     </section>
 
     <section class="auth-shell__panel">

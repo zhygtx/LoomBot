@@ -92,7 +92,7 @@ async function submit(): Promise<void> {
   <AuthShell
     eyebrow="Join LoomBot"
     title="创建账号"
-    description="当前阶段注册用户默认拥有站长权限，仅用于功能联调。"
+    description="使用邮箱验证码创建账号，注册后即可进入控制台。"
   >
     <form class="auth-form" novalidate @submit.prevent="submit">
       <BaseNotice v-if="!registerEnabled" tone="warning" title="注册暂时关闭">
