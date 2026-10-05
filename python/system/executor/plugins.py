@@ -34,14 +34,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # 起进程 + 加载插件（可能要 import 一堆依赖）的上限。
 START_TIMEOUT_SECONDS = 60.0
 
-# 宿主 ↔ 节点进程之间是行式 JSON，值里的二进制会 base64 展开（约 +33%）。
-# asyncio 子进程 stdout 的 StreamReader 默认单行上限只有 64KB（2**16），
-# 节点只要返回图片这类稍大的对象，整行就会超出上限：读循环抛
-# `ValueError: Separator is not found, and chunk exceed the limit` 退出，
-# 进程却还活着——之后的调用写进去再也没人读，只能干等到工作流超时。
-# 这里把上限抬到能覆盖引擎允许的内联载荷（见 engine.MAX_PAYLOAD_CHARS = 4MB，
-# 经 base64 后约 5.4MB），留出足够余量。
-NODE_MESSAGE_LIMIT = 16 * 1024 * 1024
+# 宿主 ↔ 节点进程之间是行式 JSON，值里的二进制会 base64 展开（约 +33%），
+# 整条消息必须作为一行读完。asyncio 子进程 stdout 的 StreamReader 默认单行
+# 上限只有 64KB（2**16），节点返回图片这类稍大的对象就会超出：
+# `ValueError: Separator is not found, and chunk exceed the limit`，读循环
+# 退出而进程还活着，之后的调用再也没人读，只能干等到工作流超时。
+# 这里给足余量（64MB）覆盖截图这类体积较大的返回值；超过该上限时读循环会
+# 立刻失败并重启进程，不再静默挂到超时，而不是无限缓冲。
+NODE_MESSAGE_LIMIT = 64 * 1024 * 1024
 
 
 @dataclass
