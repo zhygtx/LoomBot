@@ -34,6 +34,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # 起进程 + 加载插件（可能要 import 一堆依赖）的上限。
 START_TIMEOUT_SECONDS = 60.0
 
+# 宿主 ↔ 节点进程之间是行式 JSON，值里的二进制会 base64 展开（约 +33%）。
+# asyncio 子进程 stdout 的 StreamReader 默认单行上限只有 64KB（2**16），
+# 节点只要返回图片这类稍大的对象，整行就会超出上限：读循环抛
+# `ValueError: Separator is not found, and chunk exceed the limit` 退出，
+# 进程却还活着——之后的调用写进去再也没人读，只能干等到工作流超时。
+# 这里把上限抬到能覆盖引擎允许的内联载荷（见 engine.MAX_PAYLOAD_CHARS = 4MB，
+# 经 base64 后约 5.4MB），留出足够余量。
+NODE_MESSAGE_LIMIT = 16 * 1024 * 1024
+
 
 @dataclass
 class NodeDescriptor:
@@ -80,7 +89,16 @@ class PluginRuntime:
         """确保节点进程已就绪；已经起过就直接返回。"""
         async with self._start_lock:
             if self._process is not None and self._process.returncode is None:
-                return
+                if self._reader_task is not None and not self._reader_task.done():
+                    return
+                # 读循环已经退出、进程却还活着：stdout 没人读，再调用只会一直等
+                # 到工作流超时。主动收掉旧进程，重开一个干净的。
+                log.warning(
+                    "插件节点进程读循环已退出，重启进程: version=%s key=%s",
+                    self.plugin_version_id,
+                    self.plugin_key,
+                )
+                await self._terminate()
             await self._spawn()
 
     async def _spawn(self) -> None:
@@ -105,6 +123,7 @@ class PluginRuntime:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=NODE_MESSAGE_LIMIT,
             cwd=str(REPO_ROOT),
             env={
                 **os.environ,
@@ -138,6 +157,14 @@ class PluginRuntime:
                 self._dispatch(message)
         except asyncio.CancelledError:
             raise
+        except Exception as exc:  # noqa: BLE001 - 读循环挂了要让调用方拿到原因，别干等
+            log.warning(
+                "插件节点进程输出读取失败（单条消息上限 %s 字节）: key=%s err=%s",
+                NODE_MESSAGE_LIMIT,
+                self.plugin_key,
+                exc,
+            )
+            self._fail_all(f"插件节点进程输出读取失败：{exc}")
         finally:
             self._fail_all("插件节点进程已退出")
             if self._ready is not None and not self._ready.done():
