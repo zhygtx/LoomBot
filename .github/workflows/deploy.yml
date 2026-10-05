@@ -42,7 +42,7 @@ jobs:
           tar -czf backend.tar.gz -C staging .
 
       - name: 上传后端产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend
           path: backend.tar.gz
@@ -76,7 +76,7 @@ jobs:
         run: tar -czf ../frontend.tar.gz -C dist .
 
       - name: 上传前端产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend
           path: frontend.tar.gz
