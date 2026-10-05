@@ -402,6 +402,7 @@ const openNodeConfig = (node: WorkflowNode): void => {
 const startNodeMove = (event: PointerEvent, node: WorkflowNode): void => {
   if (historyMode.value) return
   if (event.pointerType === 'mouse' && event.button !== 0) return
+  resetStaleTouchState(event)
   selectedId.value = node.id
   historyOpen.value = false
   draggingNode.value = {
@@ -482,6 +483,43 @@ const beginPinch = (): void => {
   selection.value = null
 }
 
+/**
+ * 新的一轮触摸开始时清掉上一轮可能残留的状态。
+ *
+ * <p>移动端偶尔会漏发 pointerup / pointercancel（切后台、系统手势打断等），
+ * 残留的 pointer 会让下一次单指拖动被误判成双指缩放，表现就是画布和节点
+ * 突然怎么拖都没反应。主指针按下代表新手势开始，此时旧状态一定是失效的。
+ */
+const resetStaleTouchState = (event: PointerEvent): void => {
+  if (event.pointerType !== 'touch' || !event.isPrimary) return
+  activePointers.clear()
+  pinchState.value = null
+  panning.value = null
+  selection.value = null
+  draggingNode.value = null
+}
+
+/**
+ * 画布里的界面文字默认不进入浏览器选区：从工具栏、插件列表一类的地方起拖时，
+ * 浏览器会顺手把扫过的文字全选进来，拖远了就是一大片。
+ *
+ * <p>这里刻意不用 CSS 的 user-select: none：部分移动端浏览器会因为整个画布
+ * 不可选中而收不到触摸事件，导致画布和节点都拖不动。改成在选区刚要开始时
+ * 拦掉，效果一样，但不影响指针事件。输入框、配置面板和日志面板仍然可以选中复制。
+ */
+const handleSelectStart = (event: Event): void => {
+  const target = event.target as HTMLElement | null
+  if (!target?.closest('.workflow-studio')) return
+  if (
+    target.closest(
+      'input, textarea, select, [contenteditable="true"], .workflow-inspector, .workflow-history, .workflow-test-result',
+    )
+  ) {
+    return
+  }
+  event.preventDefault()
+}
+
 const handleCanvasPointerDown = (event: PointerEvent): void => {
   const target = event.target as HTMLElement | null
   if (
@@ -492,6 +530,7 @@ const handleCanvasPointerDown = (event: PointerEvent): void => {
     return
   }
 
+  resetStaleTouchState(event)
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
   if (activePointers.size === 2) {
     event.preventDefault()
@@ -1079,6 +1118,7 @@ onMounted(async () => {
   window.addEventListener('pointercancel', handlePointerCancel)
   window.addEventListener('keydown', handleKeydown)
   window.addEventListener('click', handleDocumentClick)
+  document.addEventListener('selectstart', handleSelectStart)
 })
 
 onBeforeUnmount(() => {
@@ -1088,6 +1128,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointercancel', handlePointerCancel)
   window.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('click', handleDocumentClick)
+  document.removeEventListener('selectstart', handleSelectStart)
 })
 </script>
 
@@ -1386,11 +1427,6 @@ onBeforeUnmount(() => {
   );
   cursor: grab;
   touch-action: none;
-  /* 画布内默认禁止选中文本：否则从工具栏、插件列表一类的地方起拖，
-     浏览器会顺势把扫过的文字全选进来，拖得远一点甚至波及整页。
-     需要复制的内容由下面几条规则单独放行。 */
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 .workflow-studio.is-panning {
@@ -1399,18 +1435,6 @@ onBeforeUnmount(() => {
 
 .workflow-studio.is-selecting {
   cursor: crosshair;
-}
-
-/* 仍然允许选中/复制的地方：表单控件、右侧配置面板、执行日志面板、测试结果弹窗 */
-.workflow-studio :deep(input),
-.workflow-studio :deep(textarea),
-.workflow-studio :deep(select),
-.workflow-studio :deep([contenteditable='true']),
-.workflow-studio :deep(.workflow-inspector),
-.workflow-studio :deep(.workflow-history),
-.workflow-studio :deep(.workflow-test-result) {
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .workflow-toolbar {

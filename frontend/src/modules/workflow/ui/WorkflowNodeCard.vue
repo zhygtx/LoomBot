@@ -160,6 +160,9 @@ defineExpose({ root })
   inline-size: 15.625rem;
   cursor: grab;
   user-select: none;
+  /* 节点自己声明不参与滚动/缩放手势：有些移动端浏览器不认祖先的 touch-action，
+     不然按住节点拖动会被当成页面滚动，节点纹丝不动。 */
+  touch-action: none;
 }
 
 .workflow-node:active {

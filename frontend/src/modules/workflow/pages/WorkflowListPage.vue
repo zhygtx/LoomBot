@@ -175,8 +175,15 @@ onMounted(load)
 
 .workflow-card__title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  min-inline-size: 0;
   gap: 8px;
+}
+
+.workflow-card__title strong {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
 }
 
 .workflow-card__desc {
@@ -212,6 +219,8 @@ onMounted(load)
 }
 
 .workflow-tag {
+  flex: none;
+  white-space: nowrap;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 12px;
@@ -226,5 +235,30 @@ onMounted(load)
 .workflow-tag.is-alert {
   background: color-mix(in srgb, var(--sys-color-warning-text) 14%, transparent);
   color: var(--sys-color-warning-text);
+}
+
+@media (max-width: 40rem) {
+  .workflow-page {
+    padding: 16px;
+  }
+
+  .workflow-page__head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .workflow-page__head :deep(.base-button) {
+    align-self: flex-start;
+  }
+
+  .workflow-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .workflow-card__actions {
+    justify-content: flex-start;
+  }
 }
 </style>
