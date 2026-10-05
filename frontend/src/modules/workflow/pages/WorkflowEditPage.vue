@@ -1386,6 +1386,11 @@ onBeforeUnmount(() => {
   );
   cursor: grab;
   touch-action: none;
+  /* 画布内默认禁止选中文本：否则从工具栏、插件列表一类的地方起拖，
+     浏览器会顺势把扫过的文字全选进来，拖得远一点甚至波及整页。
+     需要复制的内容由下面几条规则单独放行。 */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .workflow-studio.is-panning {
@@ -1394,6 +1399,18 @@ onBeforeUnmount(() => {
 
 .workflow-studio.is-selecting {
   cursor: crosshair;
+}
+
+/* 仍然允许选中/复制的地方：表单控件、右侧配置面板、执行日志面板、测试结果弹窗 */
+.workflow-studio :deep(input),
+.workflow-studio :deep(textarea),
+.workflow-studio :deep(select),
+.workflow-studio :deep([contenteditable='true']),
+.workflow-studio :deep(.workflow-inspector),
+.workflow-studio :deep(.workflow-history),
+.workflow-studio :deep(.workflow-test-result) {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .workflow-toolbar {
