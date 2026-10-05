@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import dataclasses
 import hashlib
 import json
@@ -190,6 +191,21 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, (set, frozenset, tuple)):
         return list(value)
     return str(value)
+
+
+def _transport_value(value: Any) -> Any:
+    """适配器控制面走 JSON，节点输出里的 bytes 不能直接过线。
+
+    统一转成 base64 字符串：插件动作按字符串接收即可，QQ 官方富媒体的
+    `file_data`、其他平台的字节参数都直接用这个编码。
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return base64.b64encode(bytes(value)).decode("ascii")
+    if isinstance(value, dict):
+        return {key: _transport_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_transport_value(item) for item in value]
+    return value
 
 
 def runtime_fields(
@@ -501,7 +517,7 @@ class WorkflowEngine:
             name = str(item.get("paramName") or "").strip()
             if not name:
                 continue
-            params[name] = self._resolve_input(item, context)
+            params[name] = _transport_value(self._resolve_input(item, context))
         return params
 
     def _bind_parameters(
