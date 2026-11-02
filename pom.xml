@@ -18,12 +18,12 @@
         <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <mybatis-plus.version>3.5.17</mybatis-plus.version>
+        <mybatis-plus.version>3.5.18.1</mybatis-plus.version>
         <jjwt.version>0.13.0</jjwt.version>
         <tomlj.version>2.2.0</tomlj.version>
 
         <!-- 工程约束工具版本 -->
-        <spotless.version>3.10.3</spotless.version>
+        <spotless.version>3.10.4</spotless.version>
         <google-java-format.version>1.36.1</google-java-format.version>
         <lombok.version>1.18.48</lombok.version>
 
