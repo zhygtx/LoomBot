@@ -18,7 +18,7 @@
         <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <mybatis-plus.version>3.5.17</mybatis-plus.version>
+        <mybatis-plus.version>3.5.18.1</mybatis-plus.version>
         <jjwt.version>0.13.0</jjwt.version>
         <tomlj.version>2.2.0</tomlj.version>
 
